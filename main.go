@@ -109,9 +109,6 @@ func main() {
 }
 
 func handleRequest(w dns.ResponseWriter, req *dns.Msg) {
-	var res *dns.Msg
-	var isPrimaryService *bool
-
 	var msgs []*dns.Msg
 
 	switch config.Strategy {
@@ -120,6 +117,9 @@ func handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	case StrategyFastest:
 		msgs = getResultFastest(req)
 	}
+
+	var isPrimaryService *bool
+	var res *dns.Msg
 
 	for i := 0; i < len(msgs); i++ {
 		if msgs[i] == nil {
@@ -178,11 +178,12 @@ func waitForAll(req *dns.Msg) []*dns.Msg {
 				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
 				return
 			}
-			if config.Upstreams[j].IsValidMsg(msgs[j]) {
+			if config.Upstreams[j].IsValidMsg(msg) {
 				msgs[j] = msg
 			}
 		}(i)
 	}
+
 	wg.Wait()
 	return msgs
 }
@@ -192,7 +193,8 @@ func getResultFastest(req *dns.Msg) []*dns.Msg {
 
 	var mutex sync.Mutex
 	var finishedCount int
-	var finished, primaryOk, freedomOk bool
+	var finished bool
+	var freedomIndex, primaryIndex []int
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -213,12 +215,21 @@ func getResultFastest(req *dns.Msg) []*dns.Msg {
 					return
 				}
 				// 两组 DNS 都有一个返回结果，退出
-				if primaryOk && freedomOk {
+				if len(primaryIndex) > 0 && len(freedomIndex) > 0 {
+					finished = true
+					wg.Done()
+					return
+				}
+				// 满足任一条件退出
+				//  - 国内 DNS 返回了 国内 服务器
+				//  - 国内 DNS 返回国外服务器 且 国外 DNS 有可用结果
+				if len(primaryIndex) > 0 && (msgs[primaryIndex[0]] != nil || len(freedomIndex) > 0) {
 					finished = true
 					wg.Done()
 					return
 				}
 			}()
+
 			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
 			if err != nil {
 				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
@@ -226,10 +237,19 @@ func getResultFastest(req *dns.Msg) []*dns.Msg {
 			}
 
 			mutex.Lock()
-			if !primaryOk && config.Upstreams[j].IsPrimary {
-				primaryOk = true
-				msgs[j] = msg
-			} else if !freedomOk && !config.Upstreams[j].IsPrimary {
+			if finished {
+				return
+			}
+			if config.Upstreams[j].IsPrimary {
+				if config.Upstreams[j].IsValidMsg(msg) {
+					primaryIndex = append(primaryIndex, j)
+					msgs[j] = msg
+				} else {
+					// 优化
+					primaryIndex = append(primaryIndex, j)
+				}
+			} else if !config.Upstreams[j].IsPrimary && config.Upstreams[j].IsValidMsg(msg) {
+				freedomIndex = append(freedomIndex, j)
 				msgs[j] = msg
 			}
 			mutex.Unlock()

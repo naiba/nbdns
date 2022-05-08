@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
@@ -37,6 +38,7 @@ type fileData struct {
 type QQwry struct {
 	Data   *fileData
 	Offset int64
+	mutex  sync.RWMutex
 }
 
 // InitIPData 初始化ip库数据到内存中
@@ -81,6 +83,8 @@ func NewQQwry(path string) (*QQwry, error) {
 }
 
 func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
 	if len(offset) > 0 {
 		q.SetOffset(offset[0])
 	}
