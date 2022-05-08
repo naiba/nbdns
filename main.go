@@ -58,8 +58,25 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	return nil, 0, nil
 }
 
+const (
+	_ = iota
+	StrategyWaitForAll
+	StrategyFastest
+)
+
 type Config struct {
-	Upstreams []Upstream
+	Upstreams []Upstream `json:"upstreams,omitempty"`
+	Strategy  int        `json:"strategy,omitempty"`
+}
+
+func (c *Config) StrategyName() string {
+	switch c.Strategy {
+	case StrategyFastest:
+		return "最快结果"
+	case StrategyWaitForAll:
+		return "最全结果"
+	}
+	panic("invalid strategy")
 }
 
 var wry *qqwry.QQwry
@@ -85,45 +102,37 @@ func main() {
 	addr := "127.0.0.1:8853"
 	server := &dns.Server{Addr: addr, Net: "udp"}
 	dns.HandleFunc(".", handleRequest)
-	log.Println("DNS Server 已启动:", addr)
+	log.Println("==== DNS Server ====")
+	log.Println("端口:", addr)
+	log.Println("模式:", config.StrategyName())
 	server.ListenAndServe()
 }
 
 func handleRequest(w dns.ResponseWriter, req *dns.Msg) {
-	var wg sync.WaitGroup
-	wg.Add(len(config.Upstreams))
-	msgs := make([]*dns.Msg, len(config.Upstreams))
-
-	for i := 0; i < len(config.Upstreams); i++ {
-		go func(j int) {
-			defer func() {
-				wg.Done()
-			}()
-			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
-			if err != nil {
-				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
-				return
-			}
-			msgs[j] = msg
-		}(i)
-	}
-	wg.Wait()
-
 	var res *dns.Msg
 	var isPrimaryService *bool
+
+	var msgs []*dns.Msg
+
+	switch config.Strategy {
+	case StrategyWaitForAll:
+		msgs = waitForAll(req)
+	case StrategyFastest:
+		msgs = getResultFastest(req)
+	}
 
 	for i := 0; i < len(msgs); i++ {
 		if msgs[i] == nil {
 			continue
 		}
 
-		if isPrimaryService == nil && config.Upstreams[i].IsValidMsg(msgs[i]) {
+		if isPrimaryService == nil {
 			isPrimaryService = &config.Upstreams[i].IsPrimary
 		}
 		if isPrimaryService == nil {
 			continue
 		}
-		if *isPrimaryService == config.Upstreams[i].IsPrimary && config.Upstreams[i].IsValidMsg(msgs[i]) {
+		if *isPrimaryService == config.Upstreams[i].IsPrimary {
 			if res == nil {
 				res = msgs[i]
 				continue
@@ -152,4 +161,81 @@ func unique(intSlice []dns.RR) []dns.RR {
 		}
 	}
 	return list
+}
+
+func waitForAll(req *dns.Msg) []*dns.Msg {
+	var wg sync.WaitGroup
+	wg.Add(len(config.Upstreams))
+	msgs := make([]*dns.Msg, len(config.Upstreams))
+
+	for i := 0; i < len(config.Upstreams); i++ {
+		go func(j int) {
+			defer func() {
+				wg.Done()
+			}()
+			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
+			if err != nil {
+				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
+				return
+			}
+			if config.Upstreams[j].IsValidMsg(msgs[j]) {
+				msgs[j] = msg
+			}
+		}(i)
+	}
+	wg.Wait()
+	return msgs
+}
+
+func getResultFastest(req *dns.Msg) []*dns.Msg {
+	msgs := make([]*dns.Msg, len(config.Upstreams))
+
+	var mutex sync.Mutex
+	var finishedCount int
+	var finished, primaryOk, freedomOk bool
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	for i := 0; i < len(config.Upstreams); i++ {
+		go func(j int) {
+			defer func() {
+				mutex.Lock()
+				defer mutex.Unlock()
+				finishedCount++
+				// 已经结束直接退出
+				if finished {
+					return
+				}
+				// 全部结束直接退出
+				if finishedCount == len(config.Upstreams) {
+					finished = true
+					wg.Done()
+					return
+				}
+				// 两组 DNS 都有一个返回结果，退出
+				if primaryOk && freedomOk {
+					finished = true
+					wg.Done()
+					return
+				}
+			}()
+			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
+			if err != nil {
+				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
+				return
+			}
+
+			mutex.Lock()
+			if !primaryOk && config.Upstreams[j].IsPrimary {
+				primaryOk = true
+				msgs[j] = msg
+			} else if !freedomOk && !config.Upstreams[j].IsPrimary {
+				msgs[j] = msg
+			}
+			mutex.Unlock()
+		}(i)
+	}
+
+	wg.Wait()
+	return msgs
 }

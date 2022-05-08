@@ -3,7 +3,6 @@ package qqwry
 import (
 	"encoding/binary"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -46,7 +45,6 @@ func (f *fileData) InitIPData() error {
 	var err error
 
 	// 打开文件句柄
-	log.Printf("从本地数据库文件 %s 打开\n", f.FilePath)
 	f.Path, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0400)
 	if err != nil {
 		return err
@@ -55,7 +53,6 @@ func (f *fileData) InitIPData() error {
 
 	tmpData, err = ioutil.ReadAll(f.Path)
 	if err != nil {
-		log.Println(err)
 		return err
 	}
 
