@@ -26,7 +26,11 @@ func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
 		if len(col) < 5 || net.ParseIP(col[4]) == nil {
 			continue
 		}
-		checkPrimary := up.checkPrimary(wry.Find(col[4]).Country)
+		country := wry.Find(col[4]).Country
+		checkPrimary := up.checkPrimary(country)
+		if config.Debug {
+			log.Printf("%s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, col[4], country, checkPrimary, up.IsPrimary)
+		}
 		if (up.IsPrimary && !checkPrimary) || (!up.IsPrimary && checkPrimary) {
 			return false
 		}
@@ -67,6 +71,7 @@ const (
 type Config struct {
 	Upstreams []Upstream `json:"upstreams,omitempty"`
 	Strategy  int        `json:"strategy,omitempty"`
+	Debug     bool       `json:"debug,omitempty"`
 }
 
 func (c *Config) StrategyName() string {
@@ -175,7 +180,7 @@ func waitForAll(req *dns.Msg) []*dns.Msg {
 			}()
 			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
+				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question[0].Name, err)
 				return
 			}
 			if config.Upstreams[j].IsValidMsg(msg) {
@@ -232,7 +237,7 @@ func getResultFastest(req *dns.Msg) []*dns.Msg {
 
 			msg, _, err := config.Upstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question, err)
+				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question[0].Name, err)
 				return
 			}
 
