@@ -5,6 +5,15 @@
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
 
 1. 复制 `config.json.example` 到 `config.json`，修改其中配置
+
+   ```text
+   is_primary：
+      将国内 DNS 的 is_primary 标记为 true
+   strategy：
+      1 为最全结果
+      2 为最快结果
+   ```
+
 2. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
 3. 你的文件层级应该是这样的
 

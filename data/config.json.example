@@ -20,12 +20,10 @@
             "is_primary": true
         },
         {
-            "address": "tcp-tls://8.8.8.8:853",
-            "is_primary": false
+            "address": "tcp-tls://8.8.8.8:853"
         },
         {
-            "address": "https://dns.google/dns-query",
-            "is_primary": false
+            "address": "https://dns.google/dns-query"
         }
     ]
 }
