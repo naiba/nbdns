@@ -1,10 +1,13 @@
 package doh
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httptrace"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,28 +19,45 @@ const (
 )
 
 type clientOptions struct {
-	Timeout time.Duration // Timeout for one DNS query
+	timeout time.Duration
+	server  string
+	debug   bool
 }
 
 type ClientOption func(*clientOptions) error
 
 func WithTimeout(t time.Duration) ClientOption {
 	return func(o *clientOptions) error {
-		o.Timeout = t
+		o.timeout = t
 		return nil
 	}
 }
 
-func (o clientOptions) timeout() time.Duration {
-	if o.Timeout != 0 {
-		return o.Timeout
+func WithDebug(debug bool) ClientOption {
+	return func(o *clientOptions) error {
+		o.debug = debug
+		return nil
+	}
+}
+
+func WithServer(server string) ClientOption {
+	return func(o *clientOptions) error {
+		o.server = server
+		return nil
+	}
+}
+
+func (o clientOptions) Timeout() time.Duration {
+	if o.timeout != 0 {
+		return o.timeout
 	}
 	return httpTimeout
 }
 
 type Client struct {
-	opt *clientOptions
-	cli *http.Client
+	opt      *clientOptions
+	cli      *http.Client
+	traceCtx context.Context
 }
 
 func NewClient(opts ...ClientOption) *Client {
@@ -45,15 +65,23 @@ func NewClient(opts ...ClientOption) *Client {
 	for _, f := range opts {
 		f(o)
 	}
+	clientTrace := &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			if o.debug {
+				log.Printf("http conn was reused: %t", info.Reused)
+			}
+		},
+	}
 	return &Client{
-		opt: o,
+		opt:      o,
+		traceCtx: httptrace.WithClientTrace(context.Background(), clientTrace),
 		cli: &http.Client{
-			Timeout: o.timeout(),
+			Timeout: o.Timeout(),
 		},
 	}
 }
 
-func (c *Client) Exchange(req *dns.Msg, address string) (r *dns.Msg, rtt time.Duration, err error) {
+func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err error) {
 	var (
 		buf, b64 []byte
 		begin    = time.Now()
@@ -69,8 +97,7 @@ func (c *Client) Exchange(req *dns.Msg, address string) (r *dns.Msg, rtt time.Du
 	}
 	base64.RawURLEncoding.Encode(b64, buf)
 
-	// No need to use hreq.URL.Query()
-	hreq, _ := http.NewRequest("GET", address+"?dns="+string(b64), nil)
+	hreq, _ := http.NewRequestWithContext(c.traceCtx, http.MethodGet, c.opt.server+"?dns="+string(b64), nil)
 	hreq.Header.Add("Accept", dohMediaType)
 	resp, err := c.cli.Do(hreq)
 	if err != nil {

@@ -1,104 +1,32 @@
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
 	"log"
-	"net"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/miekg/dns"
+	"github.com/pkg/profile"
 
-	"github.com/naiba/nbdns/pkg/doh"
+	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/pkg/qqwry"
 )
 
-type Upstream struct {
-	IsPrimary bool   `json:"is_primary,omitempty"`
-	Address   string `json:"address,omitempty"`
-}
+var (
+	version string
 
-func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
-	for i := 0; i < len(r.Answer); i++ {
-		col := strings.Split(r.Answer[i].String(), "\t")
-		if len(col) < 5 || net.ParseIP(col[4]) == nil {
-			continue
-		}
-		country := wry.Find(col[4]).Country
-		checkPrimary := up.checkPrimary(country)
-		if config.Debug {
-			log.Printf("%s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, col[4], country, checkPrimary, up.IsPrimary)
-		}
-		if (up.IsPrimary && !checkPrimary) || (!up.IsPrimary && checkPrimary) {
-			return false
-		}
-	}
-	return true
-}
-
-func (up *Upstream) checkPrimary(str string) bool {
-	return strings.Contains(str, "省") || strings.Contains(str, "市") || strings.Contains(str, "自治区")
-}
-
-func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	protocol, addr, found := strings.Cut(up.Address, "://")
-	if !found {
-		log.Panicf("invalid upstream address: %s", up.Address)
-	}
-
-	switch protocol {
-	case "https":
-		c := doh.NewClient()
-		return c.Exchange(req, up.Address)
-	case "udp", "tcp", "tcp-tls":
-		c := new(dns.Client)
-		c.Net = protocol
-		return c.Exchange(req, addr)
-	}
-
-	log.Panicf("invalid upstream protocol: %s in address %s", protocol, up.Address)
-	return nil, 0, nil
-}
-
-const (
-	_ = iota
-	StrategyWaitForAll
-	StrategyFastest
+	ipdb   *qqwry.QQwry
+	config *model.Config
 )
-
-type Config struct {
-	Upstreams []Upstream `json:"upstreams,omitempty"`
-	Strategy  int        `json:"strategy,omitempty"`
-	Debug     bool       `json:"debug,omitempty"`
-}
-
-func (c *Config) StrategyName() string {
-	switch c.Strategy {
-	case StrategyFastest:
-		return "最快结果"
-	case StrategyWaitForAll:
-		return "最全结果"
-	}
-	panic("invalid strategy")
-}
-
-var wry *qqwry.QQwry
-var config *Config
 
 func init() {
 	var err error
-	wry, err = qqwry.NewQQwry("data/qqwry_lastest.dat")
+	ipdb, err = qqwry.NewQQwry("data/qqwry_lastest.dat")
 	if err != nil {
 		panic(err)
 	}
-	config = &Config{}
-	body, err := ioutil.ReadFile("data/config.json")
-	if err != nil {
-		panic(err)
-	}
-	if err := json.Unmarshal([]byte(body), config); err != nil {
+	config = &model.Config{}
+	if err = config.ReadInConfig("data/config.json"); err != nil {
 		panic(err)
 	}
 }
@@ -110,6 +38,12 @@ func main() {
 	log.Println("==== DNS Server ====")
 	log.Println("端口:", addr)
 	log.Println("模式:", config.StrategyName())
+	log.Println("版本:", version)
+
+	if config.Profiling != "" {
+		defer profile.Start(profile.ProfilePath("debug"), config.ProfileMode()).Stop()
+	}
+
 	server.ListenAndServe()
 }
 
@@ -117,10 +51,10 @@ func handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	var msgs []*dns.Msg
 
 	switch config.Strategy {
-	case StrategyWaitForAll:
-		msgs = waitForAll(req)
-	case StrategyFastest:
-		msgs = getResultFastest(req)
+	case model.StrategyFullest:
+		msgs = getTheFullestResults(req)
+	case model.StrategyFastest:
+		msgs = getTheFastestResults(req)
 	}
 
 	var isPrimaryService *bool
@@ -168,7 +102,7 @@ func unique(intSlice []dns.RR) []dns.RR {
 	return list
 }
 
-func waitForAll(req *dns.Msg) []*dns.Msg {
+func getTheFullestResults(req *dns.Msg) []*dns.Msg {
 	var wg sync.WaitGroup
 	wg.Add(len(config.Upstreams))
 	msgs := make([]*dns.Msg, len(config.Upstreams))
@@ -183,7 +117,7 @@ func waitForAll(req *dns.Msg) []*dns.Msg {
 				log.Printf("upstream error %s: %v %s", config.Upstreams[j].Address, req.Question[0].Name, err)
 				return
 			}
-			if config.Upstreams[j].IsValidMsg(msg) {
+			if config.Upstreams[j].IsValidMsg(ipdb, config, msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -193,13 +127,14 @@ func waitForAll(req *dns.Msg) []*dns.Msg {
 	return msgs
 }
 
-func getResultFastest(req *dns.Msg) []*dns.Msg {
+func getTheFastestResults(req *dns.Msg) []*dns.Msg {
 	msgs := make([]*dns.Msg, len(config.Upstreams))
 
 	var mutex sync.Mutex
 	var finishedCount int
 	var finished bool
 	var freedomIndex, primaryIndex []int
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 
@@ -246,14 +181,14 @@ func getResultFastest(req *dns.Msg) []*dns.Msg {
 				return
 			}
 			if config.Upstreams[j].IsPrimary {
-				if config.Upstreams[j].IsValidMsg(msg) {
+				if config.Upstreams[j].IsValidMsg(ipdb, config, msg) {
 					primaryIndex = append(primaryIndex, j)
 					msgs[j] = msg
 				} else {
 					// 优化
 					primaryIndex = append(primaryIndex, j)
 				}
-			} else if !config.Upstreams[j].IsPrimary && config.Upstreams[j].IsValidMsg(msg) {
+			} else if !config.Upstreams[j].IsPrimary && config.Upstreams[j].IsValidMsg(ipdb, config, msg) {
 				freedomIndex = append(freedomIndex, j)
 				msgs[j] = msg
 			}

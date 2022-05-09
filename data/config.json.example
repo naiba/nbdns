@@ -1,0 +1,31 @@
+{
+    "debug": false,
+    "profiling": "",
+    "strategy": 2,
+    "upstreams": [
+        {
+            "address": "udp://223.5.5.5:53",
+            "is_primary": true
+        },
+        {
+            "address": "udp://223.6.6.6:53",
+            "is_primary": true
+        },
+        {
+            "address": "udp://114.114.114.114:53",
+            "is_primary": true
+        },
+        {
+            "address": "udp://119.28.28.28:53",
+            "is_primary": true
+        },
+        {
+            "address": "tcp-tls://8.8.8.8:853",
+            "is_primary": false
+        },
+        {
+            "address": "https://dns.google/dns-query",
+            "is_primary": false
+        }
+    ]
+}
