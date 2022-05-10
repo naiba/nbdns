@@ -1,6 +1,6 @@
 # nbdns
 
-一个聪明的 DNS 中继，放置于 AdGuard Home 上游，可提升 DNS 解析体验。
+:seal: 一个聪明的 DNS 转发器，放置于 AdGuard Home 上游，可提升 DNS 解析体验。
 
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
 
