@@ -17,3 +17,4 @@
 !/data/config.json.example
 /main
 /debug
+.DS_Store
