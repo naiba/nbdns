@@ -2,6 +2,14 @@
     "debug": false,
     "profiling": "",
     "strategy": 2,
+    "bootstrap": [
+        {
+            "address": "udp://223.5.5.5:53"
+        },
+        {
+            "address": "udp://223.6.6.6:53"
+        }
+    ],
     "upstreams": [
         {
             "address": "udp://223.5.5.5:53",

@@ -11,13 +11,17 @@ const (
 	_ = iota
 	StrategyFullest
 	StrategyFastest
+	StrategyAnyResult
 )
 
 type Config struct {
-	Upstreams []Upstream `json:"upstreams,omitempty"`
+	Bootstrap []Upstream `json:"bootstrap,omitempty"`
+
 	Strategy  int        `json:"strategy,omitempty"`
-	Debug     bool       `json:"debug,omitempty"`
-	Profiling string     `json:"profiling,omitempty"`
+	Upstreams []Upstream `json:"upstreams,omitempty"`
+
+	Debug     bool   `json:"debug,omitempty"`
+	Profiling string `json:"profiling,omitempty"`
 }
 
 func (c *Config) ReadInConfig(path string) error {
@@ -28,9 +32,6 @@ func (c *Config) ReadInConfig(path string) error {
 	if err := json.Unmarshal([]byte(body), c); err != nil {
 		return err
 	}
-	for i := 0; i < len(c.Upstreams); i++ {
-		c.Upstreams[i].InitConnectionPool(c.Debug)
-	}
 	return nil
 }
 
@@ -40,6 +41,8 @@ func (c *Config) StrategyName() string {
 		return "最全结果"
 	case StrategyFastest:
 		return "最快结果"
+	case StrategyAnyResult:
+		return "任一结果（建议仅 bootstrap）"
 	}
 	panic("invalid strategy")
 }
@@ -52,6 +55,8 @@ func (c *Config) ProfileMode() func(*profile.Profile) {
 		return profile.MemProfile
 	case "alloc":
 		return profile.MemProfileAllocs
+	case "heap":
+		return profile.MemProfileHeap
 	}
 	panic("invalid profiling mode")
 }

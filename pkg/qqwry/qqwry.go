@@ -27,59 +27,40 @@ type ResultQQwry struct {
 	Area    string `json:"area"`
 }
 
-type fileData struct {
-	Data     []byte
-	FilePath string
-	Path     *os.File
-	IPNum    int64
-}
-
 // QQwry 纯真ip库
 type QQwry struct {
-	Data   *fileData
+	Data   []byte
 	Offset int64
 	mutex  sync.RWMutex
 }
 
 // InitIPData 初始化ip库数据到内存中
-func (f *fileData) InitIPData() error {
+func (q *QQwry) InitIPData(path string) error {
 	var tmpData []byte
 	var err error
 
 	// 打开文件句柄
-	f.Path, err = os.OpenFile(f.FilePath, os.O_RDONLY, 0400)
+	file, err := os.OpenFile(path, os.O_RDONLY, 0400)
 	if err != nil {
 		return err
 	}
-	defer f.Path.Close()
+	defer file.Close()
 
-	tmpData, err = ioutil.ReadAll(f.Path)
+	tmpData, err = ioutil.ReadAll(file)
 	if err != nil {
 		return err
 	}
 
-	f.Data = tmpData
-
-	buf := f.Data[0:8]
-	start := binary.LittleEndian.Uint32(buf[:4])
-	end := binary.LittleEndian.Uint32(buf[4:])
-
-	f.IPNum = int64((end-start)/IndexLen + 1)
-
+	q.Data = tmpData
 	return nil
 }
 
 func NewQQwry(path string) (*QQwry, error) {
-	var data fileData
-
-	data.FilePath = path
-	if err := data.InitIPData(); err != nil {
+	var wry QQwry
+	if err := wry.InitIPData(path); err != nil {
 		return nil, err
 	}
-
-	return &QQwry{
-		Data: &data,
-	}, nil
+	return &wry, nil
 }
 
 func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
@@ -90,7 +71,7 @@ func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
 	}
 	nums := int64(num)
 	end := q.Offset + nums
-	dataNum := int64(len(q.Data.Data))
+	dataNum := int64(len(q.Data))
 	if q.Offset > dataNum {
 		return nil
 	}
@@ -98,7 +79,7 @@ func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
 	if end > dataNum {
 		end = dataNum
 	}
-	rs = q.Data.Data[q.Offset:end]
+	rs = q.Data[q.Offset:end]
 	q.Offset = end
 	return
 }

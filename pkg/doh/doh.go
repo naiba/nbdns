@@ -3,14 +3,16 @@ package doh
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptrace"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -19,9 +21,10 @@ const (
 )
 
 type clientOptions struct {
-	timeout time.Duration
-	server  string
-	debug   bool
+	timeout   time.Duration
+	server    string
+	bootstrap func(domain string) (net.IP, error)
+	debug     bool
 }
 
 type ClientOption func(*clientOptions) error
@@ -47,6 +50,13 @@ func WithServer(server string) ClientOption {
 	}
 }
 
+func WithBootstrap(resolver func(domain string) (net.IP, error)) ClientOption {
+	return func(o *clientOptions) error {
+		o.bootstrap = resolver
+		return nil
+	}
+}
+
 func (o clientOptions) Timeout() time.Duration {
 	if o.timeout != 0 {
 		return o.timeout
@@ -65,6 +75,7 @@ func NewClient(opts ...ClientOption) *Client {
 	for _, f := range opts {
 		f(o)
 	}
+
 	clientTrace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
 			if o.debug {
@@ -72,11 +83,32 @@ func NewClient(opts ...ClientOption) *Client {
 			}
 		},
 	}
+
+	var transport *http.Transport
+
+	if o.bootstrap != nil {
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+				urls := strings.Split(address, ":")
+				ipv4, err := o.bootstrap(urls[0])
+				if err != nil {
+					return nil, errors.Wrap(err, "bootstrap")
+				}
+				urls[0] = ipv4.String()
+				return (&net.Dialer{
+					Timeout: httpTimeout,
+				}).DialContext(ctx, network, strings.Join(urls, ":"))
+			},
+		}
+
+	}
+
 	return &Client{
 		opt:      o,
 		traceCtx: httptrace.WithClientTrace(context.Background(), clientTrace),
 		cli: &http.Client{
-			Timeout: o.Timeout(),
+			Transport: transport,
+			Timeout:   o.Timeout(),
 		},
 	}
 }

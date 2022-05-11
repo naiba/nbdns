@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/buraksezer/connpool v0.5.0
 	github.com/miekg/dns v1.1.48
+	github.com/pkg/errors v0.9.1
 	github.com/pkg/profile v1.6.0
 	golang.org/x/text v0.3.6
 )
