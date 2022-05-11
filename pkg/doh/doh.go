@@ -100,7 +100,6 @@ func NewClient(opts ...ClientOption) *Client {
 				}).DialContext(ctx, network, strings.Join(urls, ":"))
 			},
 		}
-
 	}
 
 	return &Client{

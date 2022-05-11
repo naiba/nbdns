@@ -1,6 +1,6 @@
 {
     "debug": false,
-    "profiling": "",
+    "profiling": false,
     "strategy": 2,
     "bootstrap": [
         {

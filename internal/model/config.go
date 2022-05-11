@@ -3,8 +3,6 @@ package model
 import (
 	"encoding/json"
 	"io/ioutil"
-
-	"github.com/pkg/profile"
 )
 
 const (
@@ -20,8 +18,8 @@ type Config struct {
 	Strategy  int        `json:"strategy,omitempty"`
 	Upstreams []Upstream `json:"upstreams,omitempty"`
 
-	Debug     bool   `json:"debug,omitempty"`
-	Profiling string `json:"profiling,omitempty"`
+	Debug     bool `json:"debug,omitempty"`
+	Profiling bool `json:"profiling,omitempty"`
 }
 
 func (c *Config) ReadInConfig(path string) error {
@@ -45,18 +43,4 @@ func (c *Config) StrategyName() string {
 		return "任一结果（建议仅 bootstrap）"
 	}
 	panic("invalid strategy")
-}
-
-func (c *Config) ProfileMode() func(*profile.Profile) {
-	switch c.Profiling {
-	case "cpu":
-		return profile.CPUProfile
-	case "mem":
-		return profile.MemProfile
-	case "alloc":
-		return profile.MemProfileAllocs
-	case "heap":
-		return profile.MemProfileHeap
-	}
-	panic("invalid profiling mode")
 }

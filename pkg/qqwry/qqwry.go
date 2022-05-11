@@ -1,226 +1,171 @@
 package qqwry
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"io/ioutil"
 	"net"
-	"os"
 	"strings"
 	"sync"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
+)
+
+var (
+	data    []byte
+	dataLen uint32
+	ipCache = &sync.Map{}
 )
 
 const (
-	// IndexLen 索引长度
-	IndexLen = 7
-	// RedirectMode1 国家的类型, 指向另一个指向
-	RedirectMode1 = 0x01
-	// RedirectMode2 国家的类型, 指向一个指向
-	RedirectMode2 = 0x02
+	indexLen      = 7
+	redirectMode1 = 0x01
+	redirectMode2 = 0x02
 )
 
-// ResultQQwry 归属地信息
-type ResultQQwry struct {
-	IP      string `json:"ip"`
-	Country string `json:"country"`
-	Area    string `json:"area"`
+type cache struct {
+	City string
+	Isp  string
 }
 
-// QQwry 纯真ip库
-type QQwry struct {
-	Data   []byte
-	Offset int64
-	mutex  sync.RWMutex
-}
-
-// InitIPData 初始化ip库数据到内存中
-func (q *QQwry) InitIPData(path string) error {
-	var tmpData []byte
-	var err error
-
-	// 打开文件句柄
-	file, err := os.OpenFile(path, os.O_RDONLY, 0400)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	tmpData, err = ioutil.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	q.Data = tmpData
-	return nil
-}
-
-func NewQQwry(path string) (*QQwry, error) {
-	var wry QQwry
-	if err := wry.InitIPData(path); err != nil {
-		return nil, err
-	}
-	return &wry, nil
-}
-
-func (q *QQwry) ReadData(num int, offset ...int64) (rs []byte) {
-	q.mutex.Lock()
-	defer q.mutex.Unlock()
-	if len(offset) > 0 {
-		q.SetOffset(offset[0])
-	}
-	nums := int64(num)
-	end := q.Offset + nums
-	dataNum := int64(len(q.Data))
-	if q.Offset > dataNum {
-		return nil
-	}
-
-	if end > dataNum {
-		end = dataNum
-	}
-	rs = q.Data[q.Offset:end]
-	q.Offset = end
-	return
-}
-
-// SetOffset 设置偏移量
-func (q *QQwry) SetOffset(offset int64) {
-	q.Offset = offset
-}
-
-// Find ip地址查询对应归属地信息
-func (q *QQwry) Find(ip string) (res ResultQQwry) {
-	res = ResultQQwry{}
-
-	res.IP = ip
-	if strings.Count(ip, ".") != 3 {
-		return res
-	}
-
-	offset := q.searchIndex(binary.BigEndian.Uint32(net.ParseIP(ip).To4()))
-	if offset <= 0 {
-		return
-	}
-
-	var country []byte
-	var area []byte
-
-	mode := q.readMode(offset + 4)
-	if mode == RedirectMode1 {
-		countryOffset := q.readUInt24()
-		mode = q.readMode(countryOffset)
-		if mode == RedirectMode2 {
-			c := q.readUInt24()
-			country = q.readString(c)
-			countryOffset += 4
-		} else {
-			country = q.readString(countryOffset)
-			countryOffset += uint32(len(country) + 1)
-		}
-		area = q.readArea(countryOffset)
-	} else if mode == RedirectMode2 {
-		countryOffset := q.readUInt24()
-		country = q.readString(countryOffset)
-		area = q.readArea(offset + 8)
-	} else {
-		country = q.readString(offset + 4)
-		area = q.readArea(offset + uint32(5+len(country)))
-	}
-
-	enc := simplifiedchinese.GBK.NewDecoder()
-	res.Country, _ = enc.String(string(country))
-	res.Area, _ = enc.String(string(area))
-
-	return
-}
-
-// readMode 获取偏移值类型
-func (q *QQwry) readMode(offset uint32) byte {
-	mode := q.ReadData(1, int64(offset))
-	return mode[0]
-}
-
-// readArea 读取区域
-func (q *QQwry) readArea(offset uint32) []byte {
-	mode := q.readMode(offset)
-	if mode == RedirectMode1 || mode == RedirectMode2 {
-		areaOffset := q.readUInt24()
-		if areaOffset == 0 {
-			return []byte("")
-		}
-		return q.readString(areaOffset)
-	}
-	return q.readString(offset)
-}
-
-// readString 获取字符串
-func (q *QQwry) readString(offset uint32) []byte {
-	q.SetOffset(int64(offset))
-	data := make([]byte, 0, 30)
-	buf := make([]byte, 1)
-	for {
-		buf = q.ReadData(1)
-		if buf[0] == 0 {
-			break
-		}
-		data = append(data, buf[0])
-	}
-	return data
-}
-
-// searchIndex 查找索引位置
-func (q *QQwry) searchIndex(ip uint32) uint32 {
-	header := q.ReadData(8, 0)
-
-	start := binary.LittleEndian.Uint32(header[:4])
-	end := binary.LittleEndian.Uint32(header[4:])
-
-	buf := make([]byte, IndexLen)
-	mid := uint32(0)
-	_ip := uint32(0)
-
-	for {
-		mid = q.getMiddleOffset(start, end)
-		buf = q.ReadData(IndexLen, int64(mid))
-		_ip = binary.LittleEndian.Uint32(buf[:4])
-
-		if end-start == IndexLen {
-			offset := byteToUInt32(buf[4:])
-			buf = q.ReadData(IndexLen)
-			if ip < binary.LittleEndian.Uint32(buf[:4]) {
-				return offset
-			}
-			return 0
-		}
-
-		// 找到的比较大，向前移
-		if _ip > ip {
-			end = mid
-		} else if _ip < ip { // 找到的比较小，向后移
-			start = mid
-		} else if _ip == ip {
-			return byteToUInt32(buf[4:])
-		}
-	}
-}
-
-// readUInt24
-func (q *QQwry) readUInt24() uint32 {
-	buf := q.ReadData(3)
-	return byteToUInt32(buf)
-}
-
-// getMiddleOffset
-func (q *QQwry) getMiddleOffset(start uint32, end uint32) uint32 {
-	records := ((end - start) / IndexLen) >> 1
-	return start + records*IndexLen
-}
-
-// byteToUInt32 将 byte 转换为uint32
-func byteToUInt32(data []byte) uint32 {
+func byte3ToUInt32(data []byte) uint32 {
 	i := uint32(data[0]) & 0xff
 	i |= (uint32(data[1]) << 8) & 0xff00
 	i |= (uint32(data[2]) << 16) & 0xff0000
 	return i
+}
+
+func gb18030Decode(src []byte) string {
+	in := bytes.NewReader(src)
+	out := transform.NewReader(in, simplifiedchinese.GB18030.NewDecoder())
+	d, _ := ioutil.ReadAll(out)
+	return string(d)
+}
+
+// QueryIP 从内存或缓存查询IP
+func QueryIP(queryIp string) (city string, isp string, err error) {
+	if v, ok := ipCache.Load(queryIp); ok {
+		city = v.(cache).City
+		isp = v.(cache).Isp
+		return
+	}
+	ip := net.ParseIP(queryIp).To4()
+	if ip == nil {
+		err = errors.New("ip is not ipv4")
+		return
+	}
+	ip32 := binary.BigEndian.Uint32(ip)
+	posA := binary.LittleEndian.Uint32(data[:4])
+	posZ := binary.LittleEndian.Uint32(data[4:8])
+	var offset uint32 = 0
+	for {
+		mid := posA + (((posZ-posA)/indexLen)>>1)*indexLen
+		buf := data[mid : mid+indexLen]
+		_ip := binary.LittleEndian.Uint32(buf[:4])
+		if posZ-posA == indexLen {
+			offset = byte3ToUInt32(buf[4:])
+			buf = data[mid+indexLen : mid+indexLen+indexLen]
+			if ip32 < binary.LittleEndian.Uint32(buf[:4]) {
+				break
+			} else {
+				offset = 0
+				break
+			}
+		}
+		if _ip > ip32 {
+			posZ = mid
+		} else if _ip < ip32 {
+			posA = mid
+		} else if _ip == ip32 {
+			offset = byte3ToUInt32(buf[4:])
+			break
+		}
+	}
+	if offset <= 0 {
+		err = errors.New("ip not found")
+		return
+	}
+	posM := offset + 4
+	mode := data[posM]
+	var ispPos uint32
+	switch mode {
+	case redirectMode1:
+		posC := byte3ToUInt32(data[posM+1 : posM+4])
+		mode = data[posC]
+		posCA := posC
+		if mode == redirectMode2 {
+			posCA = byte3ToUInt32(data[posC+1 : posC+4])
+			posC += 4
+		}
+		for i := posCA; i < dataLen; i++ {
+			if data[i] == 0 {
+				city = string(data[posCA:i])
+				break
+			}
+		}
+		if mode != redirectMode2 {
+			posC += uint32(len(city) + 1)
+		}
+		ispPos = posC
+	case redirectMode2:
+		posCA := byte3ToUInt32(data[posM+1 : posM+4])
+		for i := posCA; i < dataLen; i++ {
+			if data[i] == 0 {
+				city = string(data[posCA:i])
+				break
+			}
+		}
+		ispPos = offset + 8
+	default:
+		posCA := offset + 4
+		for i := posCA; i < dataLen; i++ {
+			if data[i] == 0 {
+				city = string(data[posCA:i])
+				break
+			}
+		}
+		ispPos = offset + uint32(5+len(city))
+	}
+	if city != "" {
+		city = strings.TrimSpace(gb18030Decode([]byte(city)))
+	}
+	ispMode := data[ispPos]
+	if ispMode == redirectMode1 || ispMode == redirectMode2 {
+		ispPos = byte3ToUInt32(data[ispPos+1 : ispPos+4])
+	}
+	if ispPos > 0 {
+		for i := ispPos; i < dataLen; i++ {
+			if data[i] == 0 {
+				isp = string(data[ispPos:i])
+				if isp != "" {
+					if strings.Contains(isp, "CZ88.NET") {
+						isp = ""
+					} else {
+						isp = strings.TrimSpace(gb18030Decode([]byte(isp)))
+					}
+				}
+				break
+			}
+		}
+	}
+	ipCache.Store(queryIp, cache{City: city, Isp: isp})
+	return
+}
+
+// LoadData 从内存加载IP数据库
+func LoadData(database []byte) {
+	data = database
+	dataLen = uint32(len(data))
+}
+
+// LoadFile 从文件加载IP数据库
+func LoadFile(filepath string) (err error) {
+	data, err = ioutil.ReadFile(filepath)
+	if err != nil {
+		return
+	}
+	dataLen = uint32(len(data))
+	return
 }

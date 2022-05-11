@@ -9,21 +9,18 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
-	"github.com/naiba/nbdns/pkg/qqwry"
 )
 
 type Handler struct {
 	strategy  int
 	upstreams []model.Upstream
-	ipdb      *qqwry.QQwry
 	debug     bool
 }
 
 func NewHandler(strategy int,
 	upstreams []model.Upstream,
-	ipdb *qqwry.QQwry,
 	debug bool) *Handler {
-	return &Handler{strategy: strategy, upstreams: upstreams, ipdb: ipdb, debug: debug}
+	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug}
 }
 
 func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
@@ -131,7 +128,7 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
 				return
 			}
-			if h.upstreams[j].IsValidMsg(h.ipdb, h.debug, msg) {
+			if h.upstreams[j].IsValidMsg(h.debug, msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -195,14 +192,14 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 				return
 			}
 			if h.upstreams[j].IsPrimary {
-				if h.upstreams[j].IsValidMsg(h.ipdb, h.debug, msg) {
+				if h.upstreams[j].IsValidMsg(h.debug, msg) {
 					primaryIndex = append(primaryIndex, j)
 					msgs[j] = msg
 				} else {
 					// 优化
 					primaryIndex = append(primaryIndex, j)
 				}
-			} else if !h.upstreams[j].IsPrimary && h.upstreams[j].IsValidMsg(h.ipdb, h.debug, msg) {
+			} else if !h.upstreams[j].IsPrimary && h.upstreams[j].IsValidMsg(h.debug, msg) {
 				freedomIndex = append(freedomIndex, j)
 				msgs[j] = msg
 			}
