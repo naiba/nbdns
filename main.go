@@ -6,6 +6,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"runtime/pprof"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -62,9 +63,12 @@ func main() {
 	log.Println("版本:", version)
 
 	if config.Profiling {
-		pprof := ":8854"
-		go http.ListenAndServe(pprof, nil)
-		log.Println("pprof:", pprof)
+		http.HandleFunc("/debug/goroutine", func(w http.ResponseWriter, r *http.Request) {
+			profile := pprof.Lookup("goroutine")
+			profile.WriteTo(w, 2)
+		})
+		go http.ListenAndServe(":8854", nil)
+		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/heap")
 	}
 
 	server.ListenAndServe()

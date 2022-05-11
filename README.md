@@ -4,7 +4,8 @@
 
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
 
-1. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
+1. 从 [releases](/releases) 下载最新的 `nbdns`
+2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
    bootstrap: 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
@@ -16,8 +17,8 @@
          3: 任一结果（建议仅 bootstrap 使用）
    ```
 
-2. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
-3. 你的文件层级应该是这样的
+3. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
+4. 你的文件层级应该是这样的
 
    ```shell
    |- nbdns
@@ -26,8 +27,8 @@
       |- qqwry_lastest.dat
    ```
 
-4. 启动 `./nbdns`
-5. 在 `adguardhome:2333/#dns` 将 `127.0.0.1:8853` 配置到 `上游服务器`
+5. 启动 `./nbdns`
+6. 在 `adguardhome:2333/#dns` 将 `127.0.0.1:8853` 配置到 `上游服务器`
 
 在运行 `nbdns` 机器上测试：
 

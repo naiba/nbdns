@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 	d.Timeout = defaultTimeout
 	switch up.protocol {
 	case "tcp":
-		return d.DialContext(context.Background(), up.protocol, host)
+		return d.Dial(up.protocol, host)
 	case "tcp-tls":
 		return tls.DialWithDialer(&d, "tcp", host, nil)
 	}
@@ -130,10 +131,8 @@ func (up *Upstream) poolLen() int {
 
 func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	if up.debug {
-		log.Printf("tracing exchange %s worker_count: %d pool_count: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), "enter")
-		defer func() {
-			log.Printf("tracing exchange %s worker_count: %d pool_count: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), "exit")
-		}()
+		log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
+		defer log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
 	}
 
 	switch up.protocol {
@@ -144,7 +143,9 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		client.Timeout = defaultTimeout
 		return client.Exchange(req, up.host)
 	case "tcp", "tcp-tls":
-		conn, err := up.pool.Get(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		defer cancel()
+		conn, err := up.pool.Get(ctx)
 		if err != nil {
 			return nil, 0, err
 		}

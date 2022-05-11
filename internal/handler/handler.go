@@ -189,6 +189,7 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 
 			mutex.Lock()
 			if finished {
+				mutex.Unlock()
 				return
 			}
 			if h.upstreams[j].IsPrimary {
