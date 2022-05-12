@@ -51,14 +51,13 @@ func init() {
 }
 
 func main() {
-	addr := "127.0.0.1:8853"
-	server := &dns.Server{Addr: addr, Net: "udp"}
+	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 
 	upstreamHandler := handler.NewHandler(config.Strategy, config.Upstreams, config.Debug)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	log.Println("==== DNS Server ====")
-	log.Println("端口:", addr)
+	log.Println("端口:", config.ServeAddr)
 	log.Println("模式:", config.StrategyName())
 	log.Println("版本:", version)
 

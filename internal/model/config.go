@@ -13,10 +13,10 @@ const (
 )
 
 type Config struct {
-	Bootstrap []Upstream `json:"bootstrap,omitempty"`
-
+	ServeAddr string     `json:"serve_addr,omitempty"`
 	Strategy  int        `json:"strategy,omitempty"`
 	Upstreams []Upstream `json:"upstreams,omitempty"`
+	Bootstrap []Upstream `json:"bootstrap,omitempty"`
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`

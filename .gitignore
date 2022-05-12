@@ -16,5 +16,6 @@
 /data/*
 !/data/config.json.example
 /main
+/nbdns
 /debug
 .DS_Store
