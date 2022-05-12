@@ -8,13 +8,13 @@
 2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
+   strategy:
+      1: 最全结果
+      2: 最快结果
+      3: 任一结果（不建议使用）
    bootstrap: 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
    upstreams: 上游 DNS 列表
       is_primary: 将国内 DNS 的 is_primary 标记为 true
-      strategy:
-         1: 最全结果
-         2: 最快结果
-         3: 任一结果（建议仅 bootstrap 使用）
    ```
 
 3. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
@@ -36,3 +36,5 @@
 dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.baidu.com
 dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
 ```
+
+Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具

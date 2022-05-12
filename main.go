@@ -6,6 +6,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 
@@ -19,18 +20,19 @@ import (
 var (
 	version string = "dev"
 
-	config *model.Config
+	config   *model.Config
+	dataPath = detectDataPath()
 )
 
 func init() {
 	log.SetOutput(os.Stdout)
 
-	if err := qqwry.LoadFile("data/qqwry_lastest.dat"); err != nil {
+	if err := qqwry.LoadFile(dataPath + "/qqwry_lastest.dat"); err != nil {
 		panic(err)
 	}
 
 	config = &model.Config{}
-	if err := config.ReadInConfig("data/config.json"); err != nil {
+	if err := config.ReadInConfig(dataPath + "/config.json"); err != nil {
 		panic(err)
 	}
 
@@ -59,6 +61,7 @@ func main() {
 	log.Println("==== DNS Server ====")
 	log.Println("端口:", config.ServeAddr)
 	log.Println("模式:", config.StrategyName())
+	log.Println("数据:", dataPath)
 	log.Println("版本:", version)
 
 	if config.Profiling {
@@ -71,4 +74,26 @@ func main() {
 	}
 
 	server.ListenAndServe()
+}
+
+func detectDataPath() string {
+	ex, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+	pwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	pathList := []string{filepath.Dir(ex), pwd}
+
+	for _, path := range pathList {
+		if f, err := os.Stat(path + "/data/qqwry_lastest.dat"); err == nil {
+			if f.Size() < 1024*1024*5 {
+				panic("离线IP库 qqwry_lastest.dat 文件损坏，请重新下载")
+			}
+			return path + "/data/"
+		}
+	}
+	panic("没有检测到数据目录")
 }
