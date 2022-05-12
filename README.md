@@ -4,7 +4,7 @@
 
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
 
-1. 从 [releases](/releases) 下载最新的 `nbdns`
+1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新的 `nbdns`
 2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
