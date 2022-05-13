@@ -31,6 +31,18 @@
 
 5. 启动 `./nbdns`
 6. 在 `adguardhome:2333/#dns` 将 `127.0.0.1:8853` 配置到 `上游服务器`
+
+在运行 `nbdns` 机器上测试：
+
+```shell
+dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.baidu.com
+dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
+```
+
+Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
+
+### FAQ
+
 <details>
     <summary>OpenWRT 自启动</summary>
 
@@ -69,11 +81,3 @@ restart() {
 赋予执行权限 `chmod +x /etc/init.d/nbdns` 然后启动服务 `/etc/init.d/nbdns enable && /etc/init.d/nbdns start`
 
 </details>
-在运行 `nbdns` 机器上测试：
-
-```shell
-dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.baidu.com
-dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
-```
-
-Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
