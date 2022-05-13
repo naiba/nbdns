@@ -41,7 +41,7 @@ dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
 
 Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
-### FAQ
+## FAQ
 
 <details>
     <summary>OpenWRT 自启动</summary>

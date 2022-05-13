@@ -22,6 +22,8 @@ import (
 
 const defaultTimeout = time.Second * 2
 
+var checkPrimaryIdentity = []string{"中国", "省", "市", "自治区"}
+
 type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
 	Address   string `json:"address,omitempty"`
@@ -112,6 +114,9 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 }
 
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
+	if !up.IsPrimary {
+		return true
+	}
 	for i := 0; i < len(r.Answer); i++ {
 		col := strings.Split(r.Answer[i].String(), "\t")
 		if len(col) < 5 || net.ParseIP(col[4]) == nil {
@@ -124,17 +129,20 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		}
 		checkPrimary := up.checkPrimary(country)
 		if debug {
-			log.Printf("%s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, col[4], country, checkPrimary, up.IsPrimary)
+			log.Printf("checkPrimary %s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, col[4], country, checkPrimary, up.IsPrimary)
 		}
-		if (up.IsPrimary && !checkPrimary) || (!up.IsPrimary && checkPrimary) {
-			return false
-		}
+		return checkPrimary
 	}
 	return true
 }
 
 func (up *Upstream) checkPrimary(str string) bool {
-	return strings.Contains(str, "省") || strings.Contains(str, "市") || strings.Contains(str, "自治区")
+	for i := 0; i < len(checkPrimaryIdentity); i++ {
+		if strings.Contains(str, checkPrimaryIdentity[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 func (up *Upstream) poolLen() int {

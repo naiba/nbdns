@@ -192,17 +192,16 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 				mutex.Unlock()
 				return
 			}
-			if h.upstreams[j].IsPrimary {
-				if h.upstreams[j].IsValidMsg(h.debug, msg) {
+			if h.upstreams[j].IsValidMsg(h.debug, msg) {
+				if h.upstreams[j].IsPrimary {
 					primaryIndex = append(primaryIndex, j)
-					msgs[j] = msg
 				} else {
-					// 优化
-					primaryIndex = append(primaryIndex, j)
+					freedomIndex = append(freedomIndex, j)
 				}
-			} else if !h.upstreams[j].IsPrimary && h.upstreams[j].IsValidMsg(h.debug, msg) {
-				freedomIndex = append(freedomIndex, j)
 				msgs[j] = msg
+			} else if h.upstreams[j].IsPrimary {
+				// 优化
+				primaryIndex = append(primaryIndex, j)
 			}
 			mutex.Unlock()
 		}(i)
