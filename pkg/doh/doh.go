@@ -13,6 +13,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -25,6 +26,7 @@ type clientOptions struct {
 	server    string
 	bootstrap func(domain string) (net.IP, error)
 	debug     bool
+	getDialer func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)
 }
 
 type ClientOption func(*clientOptions) error
@@ -39,6 +41,13 @@ func WithTimeout(t time.Duration) ClientOption {
 func WithDebug(debug bool) ClientOption {
 	return func(o *clientOptions) error {
 		o.debug = debug
+		return nil
+	}
+}
+
+func WithSocksProxy(getDialer func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)) ClientOption {
+	return func(o *clientOptions) error {
+		o.getDialer = getDialer
 		return nil
 	}
 }
@@ -95,6 +104,17 @@ func NewClient(opts ...ClientOption) *Client {
 					return nil, errors.Wrap(err, "bootstrap")
 				}
 				urls[0] = ipv4.String()
+
+				if o.getDialer != nil {
+					dialer, _, err := o.getDialer(&net.Dialer{
+						Timeout: o.Timeout(),
+					})
+					if err != nil {
+						return nil, err
+					}
+					return dialer.Dial("tcp", strings.Join(urls, ":"))
+				}
+
 				return (&net.Dialer{
 					Timeout: httpTimeout,
 				}).DialContext(ctx, network, strings.Join(urls, ":"))

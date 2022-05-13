@@ -8,7 +8,6 @@ import (
 	"net"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/buraksezer/connpool"
@@ -26,24 +25,24 @@ var checkPrimaryIdentity = []string{"中国", "省", "市", "自治区"}
 
 type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
+	UseSocks  bool   `json:"use_socks,omitempty"`
 	Address   string `json:"address,omitempty"`
 
-	once                      sync.Once
-	pool                      connpool.Pool
-	protocol, addr, hos, port string
-	debug                     bool
+	protocol, hostAndPort, host, port string
+	config                            *Config
 
+	pool      connpool.Pool
 	dohClient *doh.Client
 	bootstrap func(host string) (net.IP, error)
 
 	count *atomic.Int64
 }
 
-func (up *Upstream) Init(debug bool) {
+func (up *Upstream) Init(config *Config) {
 	var ok bool
-	up.protocol, up.addr, ok = strings.Cut(up.Address, "://")
+	up.protocol, up.hostAndPort, ok = strings.Cut(up.Address, "://")
 	if ok && up.protocol != "https" {
-		up.hos, up.port, ok = strings.Cut(up.addr, ":")
+		up.host, up.port, ok = strings.Cut(up.hostAndPort, ":")
 	}
 	if !ok {
 		panic("上游地址格式(protocol://host:port)有误：" + up.Address)
@@ -54,12 +53,18 @@ func (up *Upstream) Init(debug bool) {
 	}
 
 	up.count = atomic.NewInt64(0)
-	up.debug = debug
+	up.config = config
 }
 
 func (up *Upstream) Validate() error {
 	if !up.IsPrimary && up.protocol == "udp" {
 		return errors.New("非 primary 只能使用 tcp(-tls)/https：" + up.Address)
+	}
+	if up.IsPrimary && up.UseSocks {
+		return errors.New("primary 无需接入 socks：" + up.Address)
+	}
+	if up.UseSocks && up.config.SocksProxy == "" {
+		return errors.New("socks 未配置，但是上游已启用：" + up.Address)
 	}
 	if up.IsPrimary && up.protocol != "udp" {
 		log.Println("[WARN] Primary 建议使用 udp 加速获取结果：" + up.Address)
@@ -68,14 +73,14 @@ func (up *Upstream) Validate() error {
 }
 
 func (up *Upstream) conntionFactory() (net.Conn, error) {
-	if up.debug {
+	if up.config.Debug {
 		log.Printf("connecting to %s", up.Address)
 	}
 
-	addr := up.addr
+	addr := up.hostAndPort
 
 	if up.bootstrap != nil {
-		ip, err := up.bootstrap(up.hos)
+		ip, err := up.bootstrap(up.host)
 		if err != nil {
 			addr = fmt.Sprintf("%s:%s", "0.0.0.0", up.port)
 		} else {
@@ -83,23 +88,45 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 		}
 	}
 
-	var d net.Dialer
-	d.Timeout = defaultTimeout
-	switch up.protocol {
-	case "tcp":
-		return d.Dial(up.protocol, addr)
-	case "tcp-tls":
-		return tls.DialWithDialer(&d, "tcp", addr, nil)
+	if up.UseSocks {
+		d, _, err := up.config.GetDialerContext(&net.Dialer{
+			Timeout: defaultTimeout,
+		})
+		if err != nil {
+			return nil, err
+		}
+		switch up.protocol {
+		case "tcp":
+			return d.Dial(up.protocol, addr)
+		case "tcp-tls":
+			conn, err := d.Dial("tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			return tls.Client(conn, &tls.Config{InsecureSkipVerify: true}), nil
+		}
+	} else {
+		var d net.Dialer
+		d.Timeout = defaultTimeout
+		switch up.protocol {
+		case "tcp":
+			return d.Dial(up.protocol, addr)
+		case "tcp-tls":
+			return tls.DialWithDialer(&d, "tcp", addr, nil)
+		}
 	}
-	return nil, nil
+
+	panic("wrong protocol: " + up.protocol)
 }
 
 func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, error)) {
 	up.bootstrap = bootstrap
 
 	if strings.Contains(up.protocol, "http") {
-		up.dohClient = doh.NewClient(doh.WithServer(up.Address), doh.WithDebug(up.debug),
-			doh.WithBootstrap(bootstrap))
+		up.dohClient = doh.NewClient(doh.WithServer(up.Address),
+			doh.WithDebug(up.config.Debug), doh.WithBootstrap(bootstrap),
+			doh.WithSocksProxy(up.config.GetDialerContext),
+		)
 	}
 
 	// 只需要启用 tcp/tcp-tls 协议的连接池
@@ -109,7 +136,6 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 			log.Panicf("init upstream connection pool failed: %s", err)
 		}
 		up.pool = p
-		return
 	}
 }
 
@@ -156,7 +182,7 @@ func (up *Upstream) poolLen() int {
 }
 
 func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	if up.debug {
+	if up.config.Debug {
 		log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
 		defer log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
 	}
@@ -167,7 +193,7 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	case "udp":
 		client := new(dns.Client)
 		client.Timeout = defaultTimeout
-		return client.Exchange(req, up.addr)
+		return client.Exchange(req, up.hostAndPort)
 	case "tcp", "tcp-tls":
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()
@@ -175,21 +201,27 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		if err != nil {
 			return nil, 0, err
 		}
-		var resp *dns.Msg
-		co := dns.Conn{Conn: conn}
-		co.Conn.SetDeadline(time.Now().Add(defaultTimeout))
-		err = co.WriteMsg(req)
-		if err == nil {
-			resp, err = co.ReadMsg()
-		}
-		if err != nil {
-			c := conn.(*connpool.PoolConn)
-			c.MarkUnusable()
-		}
-		conn.SetDeadline(time.Time{})
-		co.Close()
+		resp, err := dnsExchangeWithConn(conn, req)
 		return resp, 0, err
 	}
-	log.Panicf("invalid upstream protocol: %s in address %s", up.protocol, up.Address)
-	return nil, 0, nil
+	panic(fmt.Sprintf("invalid upstream protocol: %s in address %s", up.protocol, up.Address))
+}
+
+func dnsExchangeWithConn(conn net.Conn, req *dns.Msg) (*dns.Msg, error) {
+	var resp *dns.Msg
+	co := dns.Conn{Conn: conn}
+	co.Conn.SetDeadline(time.Now().Add(defaultTimeout))
+	err := co.WriteMsg(req)
+	if err == nil {
+		resp, err = co.ReadMsg()
+	}
+	if err != nil {
+		c, yes := conn.(*connpool.PoolConn)
+		if yes {
+			c.MarkUnusable()
+		}
+	}
+	conn.SetDeadline(time.Time{})
+	co.Close()
+	return resp, err
 }

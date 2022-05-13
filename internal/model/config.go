@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/pkg/errors"
+	"golang.org/x/net/proxy"
 )
 
 const (
@@ -16,10 +17,11 @@ const (
 )
 
 type Config struct {
-	ServeAddr string     `json:"serve_addr,omitempty"`
-	Strategy  int        `json:"strategy,omitempty"`
-	Upstreams []Upstream `json:"upstreams,omitempty"`
-	Bootstrap []Upstream `json:"bootstrap,omitempty"`
+	ServeAddr  string     `json:"serve_addr,omitempty"`
+	Strategy   int        `json:"strategy,omitempty"`
+	SocksProxy string     `json:"socks_proxy,omitempty"`
+	Upstreams  []Upstream `json:"upstreams,omitempty"`
+	Bootstrap  []Upstream `json:"bootstrap,omitempty"`
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`
@@ -34,19 +36,31 @@ func (c *Config) ReadInConfig(path string) error {
 		return err
 	}
 	for i := 0; i < len(c.Bootstrap); i++ {
-		c.Bootstrap[i].Init(c.Debug)
-		if net.ParseIP(c.Bootstrap[i].hos) == nil {
+		c.Bootstrap[i].Init(c)
+		if net.ParseIP(c.Bootstrap[i].host) == nil {
 			return errors.New("Bootstrap 服务器只能使用 IP: " + c.Bootstrap[i].Address)
 		}
 		c.Bootstrap[i].InitConnectionPool(nil)
 	}
 	for i := 0; i < len(c.Upstreams); i++ {
-		c.Upstreams[i].Init(c.Debug)
+		c.Upstreams[i].Init(c)
 		if err := c.Upstreams[i].Validate(); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (c *Config) GetDialerContext(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error) {
+	dialSocksProxy, err := proxy.SOCKS5("tcp", c.SocksProxy, nil, d)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "Error creating SOCKS5 proxy")
+	}
+	if dialContext, ok := dialSocksProxy.(proxy.ContextDialer); !ok {
+		return nil, nil, errors.New("Failed type assertion to DialContext")
+	} else {
+		return dialSocksProxy, dialContext, err
+	}
 }
 
 func (c *Config) StrategyName() string {

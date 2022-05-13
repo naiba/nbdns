@@ -151,36 +151,6 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 
 	for i := 0; i < len(h.upstreams); i++ {
 		go func(j int) {
-			defer func() {
-				mutex.Lock()
-				defer mutex.Unlock()
-				finishedCount++
-				// 已经结束直接退出
-				if finished {
-					return
-				}
-				// 全部结束直接退出
-				if finishedCount == len(h.upstreams) {
-					finished = true
-					wg.Done()
-					return
-				}
-				// 两组 DNS 都有一个返回结果，退出
-				if len(primaryIndex) > 0 && len(freedomIndex) > 0 {
-					finished = true
-					wg.Done()
-					return
-				}
-				// 满足任一条件退出
-				//  - 国内 DNS 返回了 国内 服务器
-				//  - 国内 DNS 返回国外服务器 且 国外 DNS 有可用结果
-				if len(primaryIndex) > 0 && (msgs[primaryIndex[0]] != nil || len(freedomIndex) > 0) {
-					finished = true
-					wg.Done()
-					return
-				}
-			}()
-
 			msg, _, err := h.upstreams[j].Exchange(req.Copy())
 			if err != nil {
 				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
@@ -188,10 +158,14 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 			}
 
 			mutex.Lock()
+			defer mutex.Unlock()
+
+			finishedCount++
+			// 已经结束直接退出
 			if finished {
-				mutex.Unlock()
 				return
 			}
+
 			if h.upstreams[j].IsValidMsg(h.debug, msg) {
 				if h.upstreams[j].IsPrimary {
 					primaryIndex = append(primaryIndex, j)
@@ -203,7 +177,26 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 				// 优化
 				primaryIndex = append(primaryIndex, j)
 			}
-			mutex.Unlock()
+
+			// 全部结束直接退出
+			if finishedCount == len(h.upstreams) {
+				finished = true
+				wg.Done()
+				return
+			}
+			// 两组 DNS 都有一个返回结果，退出
+			if len(primaryIndex) > 0 && len(freedomIndex) > 0 {
+				finished = true
+				wg.Done()
+				return
+			}
+			// 满足任一条件退出
+			//  - 国内 DNS 返回了 国内 服务器
+			//  - 国内 DNS 返回国外服务器 且 国外 DNS 有可用结果
+			if len(primaryIndex) > 0 && (msgs[primaryIndex[0]] != nil || len(freedomIndex) > 0) {
+				finished = true
+				wg.Done()
+			}
 		}(i)
 	}
 
@@ -222,19 +215,18 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 	for i := 0; i < len(h.upstreams); i++ {
 		go func(j int) {
 			msg, _, err := h.upstreams[j].Exchange(req.Copy())
+			if err != nil {
+				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
+			}
 			mutex.Lock()
 			defer mutex.Unlock()
 			if finished {
 				return
 			}
 			finishedCount++
-			if err != nil {
-				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
-			} else {
-				msgs[j] = msg
-			}
 			if err == nil || finishedCount == len(h.upstreams) {
 				finished = true
+				msgs[j] = msg
 				wg.Done()
 			}
 		}(i)

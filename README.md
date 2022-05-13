@@ -10,6 +10,7 @@
 2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
+   socks_proxy: 你的路由上的socks服务，格式 "192.168.55.254:9050"
    strategy:
       1: 最全结果
       2: 最快结果
@@ -17,6 +18,7 @@
    bootstrap: 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
    upstreams: 上游 DNS 列表
       is_primary: 将国内 DNS 的 is_primary 标记为 true
+      use_socks: 可以为非 is_primary 启用 socks
    ```
 
 3. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
