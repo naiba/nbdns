@@ -3,6 +3,9 @@ package model
 import (
 	"encoding/json"
 	"io/ioutil"
+	"net"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -29,6 +32,19 @@ func (c *Config) ReadInConfig(path string) error {
 	}
 	if err := json.Unmarshal([]byte(body), c); err != nil {
 		return err
+	}
+	for i := 0; i < len(c.Bootstrap); i++ {
+		c.Bootstrap[i].Init(c.Debug)
+		if net.ParseIP(c.Bootstrap[i].hos) == nil {
+			return errors.New("Bootstrap 服务器只能使用 IP: " + c.Bootstrap[i].Address)
+		}
+		c.Bootstrap[i].InitConnectionPool(nil)
+	}
+	for i := 0; i < len(c.Upstreams); i++ {
+		c.Upstreams[i].Init(c.Debug)
+		if err := c.Upstreams[i].Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

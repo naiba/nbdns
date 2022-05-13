@@ -13,6 +13,7 @@ import (
 
 	"github.com/buraksezer/connpool"
 	"github.com/miekg/dns"
+	"github.com/pkg/errors"
 	"go.uber.org/atomic"
 
 	"github.com/naiba/nbdns/pkg/doh"
@@ -25,10 +26,10 @@ type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
 	Address   string `json:"address,omitempty"`
 
-	once           sync.Once
-	pool           connpool.Pool
-	protocol, host string
-	debug          bool
+	once                      sync.Once
+	pool                      connpool.Pool
+	protocol, addr, hos, port string
+	debug                     bool
 
 	dohClient *doh.Client
 	bootstrap func(host string) (net.IP, error)
@@ -36,52 +37,66 @@ type Upstream struct {
 	count *atomic.Int64
 }
 
+func (up *Upstream) Init(debug bool) {
+	var ok bool
+	up.protocol, up.addr, ok = strings.Cut(up.Address, "://")
+	if ok && up.protocol != "https" {
+		up.hos, up.port, ok = strings.Cut(up.addr, ":")
+	}
+	if !ok {
+		panic("上游地址格式(protocol://host:port)有误：" + up.Address)
+	}
+
+	if up.count != nil {
+		panic("Upstream 已经初始化过了：" + up.Address)
+	}
+
+	up.count = atomic.NewInt64(0)
+	up.debug = debug
+}
+
+func (up *Upstream) Validate() error {
+	if !up.IsPrimary && up.protocol == "udp" {
+		return errors.New("非 primary 只能使用 tcp(-tls)/https：" + up.Address)
+	}
+	if up.IsPrimary && up.protocol != "udp" {
+		log.Println("[WARN] Primary 建议使用 udp 加速获取结果：" + up.Address)
+	}
+	return nil
+}
+
 func (up *Upstream) conntionFactory() (net.Conn, error) {
 	if up.debug {
 		log.Printf("connecting to %s", up.Address)
 	}
 
-	host := up.host
+	addr := up.addr
 
 	if up.bootstrap != nil {
-		_, addr, _ := strings.Cut(up.Address, "://")
-		domain, port, _ := strings.Cut(addr, ":")
-
-		ip, err := up.bootstrap(domain)
+		ip, err := up.bootstrap(up.hos)
 		if err != nil {
-			domain = "127.0.0.1"
+			addr = fmt.Sprintf("%s:%s", "0.0.0.0", up.port)
 		} else {
-			domain = ip.String()
+			addr = fmt.Sprintf("%s:%s", ip.String(), up.port)
 		}
-
-		host = fmt.Sprintf("%s:%s", domain, port)
 	}
 
 	var d net.Dialer
 	d.Timeout = defaultTimeout
 	switch up.protocol {
 	case "tcp":
-		return d.Dial(up.protocol, host)
+		return d.Dial(up.protocol, addr)
 	case "tcp-tls":
-		return tls.DialWithDialer(&d, "tcp", host, nil)
+		return tls.DialWithDialer(&d, "tcp", addr, nil)
 	}
 	return nil, nil
 }
 
-func (up *Upstream) InitConnectionPool(debug bool, bootstrap func(host string) (net.IP, error)) {
-	up.count = atomic.NewInt64(0)
-	up.debug = debug
+func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, error)) {
 	up.bootstrap = bootstrap
 
-	protocol, host, found := strings.Cut(up.Address, "://")
-	if !found {
-		log.Panicf("invalid upstream address: %s", up.Address)
-	}
-	up.protocol = protocol
-	up.host = host
-
 	if strings.Contains(up.protocol, "http") {
-		up.dohClient = doh.NewClient(doh.WithServer(up.Address), doh.WithDebug(debug),
+		up.dohClient = doh.NewClient(doh.WithServer(up.Address), doh.WithDebug(up.debug),
 			doh.WithBootstrap(bootstrap))
 	}
 
@@ -141,7 +156,7 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	case "udp":
 		client := new(dns.Client)
 		client.Timeout = defaultTimeout
-		return client.Exchange(req, up.host)
+		return client.Exchange(req, up.addr)
 	case "tcp", "tcp-tls":
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		defer cancel()

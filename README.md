@@ -1,5 +1,7 @@
 # nbdns
 
+![release](https://img.shields.io/github/v/release/naiba/nbdns?color=brightgreen&label=NbDNS&style=for-the-badge&logo=github)
+
 :seal: 一个聪明的 DNS 转发器，放置于 AdGuard Home 上游，可提升 DNS 解析体验。
 
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)

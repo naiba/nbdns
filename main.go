@@ -2,13 +2,11 @@ package main
 
 import (
 	"log"
-	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
-	"strings"
 
 	"github.com/miekg/dns"
 
@@ -36,19 +34,10 @@ func init() {
 		panic(err)
 	}
 
-	for i := 0; i < len(config.Bootstrap); i++ {
-		_, addr, _ := strings.Cut(config.Bootstrap[i].Address, "://")
-		ip, _, ok := strings.Cut(addr, ":")
-		if !ok || net.ParseIP(ip) == nil {
-			log.Panicf("invalid bootstrap address: %s", config.Bootstrap[i].Address)
-		}
-		config.Bootstrap[i].InitConnectionPool(config.Debug, nil)
-	}
-
 	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, config.Bootstrap, config.Debug)
 
 	for i := 0; i < len(config.Upstreams); i++ {
-		config.Upstreams[i].InitConnectionPool(config.Debug, bootstrapHandler.LookupIP)
+		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
 	}
 }
 
