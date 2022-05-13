@@ -24,11 +24,6 @@ func NewHandler(strategy int,
 }
 
 func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
-	defer func() {
-		if h.debug {
-			log.Println("bootstrap LookupIP:", host, ip, err)
-		}
-	}()
 	if ip = net.ParseIP(host); ip != nil {
 		return ip, nil
 	}
@@ -45,10 +40,15 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	for i := 0; i < len(res.Answer); i++ {
 		if aRecord, ok := res.Answer[i].(*dns.A); ok {
 			ip = aRecord.A
-			return
 		}
 	}
-	err = errors.New("no ipv4 address found")
+	// 选取最后一个（一般是备用，存活率高一些）
+	if ip == nil {
+		err = errors.New("no ipv4 address found")
+	}
+	if h.debug {
+		log.Printf("bootstrap LookupIP: %s %v --> %s %v", host, res.Answer, ip, err)
+	}
 	return
 }
 

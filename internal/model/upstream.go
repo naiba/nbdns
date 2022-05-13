@@ -115,6 +115,9 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 	if !up.IsPrimary {
+		if debug {
+			log.Printf("checkPrimary %s: %s %v %v", up.Address, r.Question[0].Name, r.Answer, up.IsPrimary)
+		}
 		return true
 	}
 	for i := 0; i < len(r.Answer); i++ {
