@@ -154,7 +154,6 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 			msg, _, err := h.upstreams[j].Exchange(req.Copy())
 			if err != nil {
 				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
-				return
 			}
 
 			mutex.Lock()
@@ -166,16 +165,18 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 				return
 			}
 
-			if h.upstreams[j].IsValidMsg(h.debug, msg) {
-				if h.upstreams[j].IsPrimary {
+			if err == nil {
+				if h.upstreams[j].IsValidMsg(h.debug, msg) {
+					if h.upstreams[j].IsPrimary {
+						primaryIndex = append(primaryIndex, j)
+					} else {
+						freedomIndex = append(freedomIndex, j)
+					}
+					msgs[j] = msg
+				} else if h.upstreams[j].IsPrimary {
+					// 策略：国内 DNS 返回了 国外 服务器，计数但是不记入结果，以 国外 DNS 为准
 					primaryIndex = append(primaryIndex, j)
-				} else {
-					freedomIndex = append(freedomIndex, j)
 				}
-				msgs[j] = msg
-			} else if h.upstreams[j].IsPrimary {
-				// 优化
-				primaryIndex = append(primaryIndex, j)
 			}
 
 			// 全部结束直接退出
@@ -220,10 +221,13 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 			}
 			mutex.Lock()
 			defer mutex.Unlock()
+
+			finishedCount++
 			if finished {
 				return
 			}
-			finishedCount++
+
+			// 已结束或任意上游返回成功时退出
 			if err == nil || finishedCount == len(h.upstreams) {
 				finished = true
 				msgs[j] = msg
