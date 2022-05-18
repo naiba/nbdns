@@ -147,18 +147,18 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		return true
 	}
 	for i := 0; i < len(r.Answer); i++ {
-		col := strings.Split(r.Answer[i].String(), "\t")
-		if len(col) < 5 || net.ParseIP(col[4]) == nil {
+		a, ok := r.Answer[i].(*dns.A)
+		if !ok {
 			continue
 		}
-		country, _, err := qqwry.QueryIP(col[4])
+		country, _, err := qqwry.QueryIP(a.A)
 		if err != nil {
-			log.Printf("qqwry query ip %s failed: %s", col[4], err)
+			log.Printf("qqwry query ip %s failed: %s", a.A, err)
 			return true
 		}
 		checkPrimary := up.checkPrimary(country)
 		if debug {
-			log.Printf("checkPrimary %s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, col[4], country, checkPrimary, up.IsPrimary)
+			log.Printf("checkPrimary %s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, a.A, country, checkPrimary, up.IsPrimary)
 		}
 		return checkPrimary
 	}

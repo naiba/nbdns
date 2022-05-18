@@ -45,18 +45,14 @@ func gb18030Decode(src []byte) string {
 }
 
 // QueryIP 从内存或缓存查询IP
-func QueryIP(queryIp string) (city string, isp string, err error) {
-	if v, ok := ipCache.Load(queryIp); ok {
+func QueryIP(ip net.IP) (city string, isp string, err error) {
+	ip32 := binary.BigEndian.Uint32(ip)
+	if v, ok := ipCache.Load(ip32); ok {
 		city = v.(cache).City
 		isp = v.(cache).Isp
 		return
 	}
-	ip := net.ParseIP(queryIp).To4()
-	if ip == nil {
-		err = errors.New("ip is not ipv4")
-		return
-	}
-	ip32 := binary.BigEndian.Uint32(ip)
+
 	posA := binary.LittleEndian.Uint32(data[:4])
 	posZ := binary.LittleEndian.Uint32(data[4:8])
 	var offset uint32 = 0
@@ -150,7 +146,7 @@ func QueryIP(queryIp string) (city string, isp string, err error) {
 			}
 		}
 	}
-	ipCache.Store(queryIp, cache{City: city, Isp: isp})
+	ipCache.Store(ip32, cache{City: city, Isp: isp})
 	return
 }
 
