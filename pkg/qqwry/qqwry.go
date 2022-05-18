@@ -16,7 +16,7 @@ import (
 var (
 	data    []byte
 	dataLen uint32
-	ipCache = &sync.Map{}
+	ipCache *sync.Map
 )
 
 const (
@@ -47,10 +47,13 @@ func gb18030Decode(src []byte) string {
 // QueryIP 从内存或缓存查询IP
 func QueryIP(ip net.IP) (city string, isp string, err error) {
 	ip32 := binary.BigEndian.Uint32(ip)
-	if v, ok := ipCache.Load(ip32); ok {
-		city = v.(cache).City
-		isp = v.(cache).Isp
-		return
+
+	if ipCache != nil {
+		if v, ok := ipCache.Load(ip32); ok {
+			city = v.(cache).City
+			isp = v.(cache).Isp
+			return
+		}
 	}
 
 	posA := binary.LittleEndian.Uint32(data[:4])
@@ -146,7 +149,9 @@ func QueryIP(ip net.IP) (city string, isp string, err error) {
 			}
 		}
 	}
-	ipCache.Store(ip32, cache{City: city, Isp: isp})
+	if ipCache != nil {
+		ipCache.Store(ip32, cache{City: city, Isp: isp})
+	}
 	return
 }
 
@@ -157,11 +162,14 @@ func LoadData(database []byte) {
 }
 
 // LoadFile 从文件加载IP数据库
-func LoadFile(filepath string) (err error) {
+func LoadFile(filepath string, useCache bool) (err error) {
 	data, err = ioutil.ReadFile(filepath)
 	if err != nil {
 		return
 	}
 	dataLen = uint32(len(data))
+	if useCache {
+		ipCache = new(sync.Map)
+	}
 	return
 }

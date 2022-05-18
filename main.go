@@ -25,7 +25,7 @@ var (
 func init() {
 	log.SetOutput(os.Stdout)
 
-	if err := qqwry.LoadFile(dataPath + "/qqwry_lastest.dat"); err != nil {
+	if err := qqwry.LoadFile(dataPath+"/qqwry_lastest.dat", false); err != nil {
 		panic(err)
 	}
 
