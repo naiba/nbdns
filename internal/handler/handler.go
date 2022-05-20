@@ -64,35 +64,27 @@ func (h *Handler) Exchange(req *dns.Msg) *dns.Msg {
 		msgs = h.getAnyResult(req)
 	}
 
-	var isPrimaryService *bool
 	var res *dns.Msg
 
 	for i := 0; i < len(msgs); i++ {
 		if msgs[i] == nil {
 			continue
 		}
-
-		if isPrimaryService == nil {
-			isPrimaryService = &h.upstreams[i].IsPrimary
-		}
-		if isPrimaryService == nil {
+		if res == nil {
+			res = msgs[i]
 			continue
 		}
-
-		if *isPrimaryService == h.upstreams[i].IsPrimary {
-			if res == nil {
-				res = msgs[i]
-				continue
-			}
-			res.Answer = append(res.Answer, msgs[i].Answer...)
-		}
+		res.Answer = append(res.Answer, msgs[i].Answer...)
 	}
 
 	if res == nil {
-		return new(dns.Msg)
+		// 如果全部上游挂了要返回错误
+		res = new(dns.Msg)
+		res.Rcode = dns.RcodeServerFailure
+	} else {
+		res.Answer = uniqueAnswer(res.Answer)
 	}
 
-	res.Answer = uniqueAnswer(res.Answer)
 	return res
 }
 
