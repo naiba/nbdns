@@ -21,7 +21,8 @@ import (
 
 const defaultTimeout = time.Second * 2
 
-var checkPrimaryIdentity = []string{"中国", "省", "市", "自治区"}
+var primaryLocations = []string{"中国", "省", "市", "自治区"}
+var nonPrimaryLocations = []string{"台湾", "香港", "澳门"}
 
 type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
@@ -166,8 +167,13 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 }
 
 func (up *Upstream) checkPrimary(str string) bool {
-	for i := 0; i < len(checkPrimaryIdentity); i++ {
-		if strings.Contains(str, checkPrimaryIdentity[i]) {
+	for i := 0; i < len(nonPrimaryLocations); i++ {
+		if strings.Contains(str, nonPrimaryLocations[i]) {
+			return false
+		}
+	}
+	for i := 0; i < len(primaryLocations); i++ {
+		if strings.Contains(str, primaryLocations[i]) {
 			return true
 		}
 	}
