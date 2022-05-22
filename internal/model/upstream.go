@@ -13,16 +13,13 @@ import (
 	"github.com/buraksezer/connpool"
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
+	"github.com/yl2chen/cidranger"
 	"go.uber.org/atomic"
 
 	"github.com/naiba/nbdns/pkg/doh"
-	"github.com/naiba/nbdns/pkg/qqwry"
 )
 
 const defaultTimeout = time.Second * 2
-
-var primaryLocations = []string{"中国", "省", "市", "自治区"}
-var nonPrimaryLocations = []string{"台湾", "香港", "澳门"}
 
 type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
@@ -31,6 +28,7 @@ type Upstream struct {
 
 	protocol, hostAndPort, host, port string
 	config                            *Config
+	ipRanger                          cidranger.Ranger
 
 	pool      connpool.Pool
 	dohClient *doh.Client
@@ -39,7 +37,7 @@ type Upstream struct {
 	count *atomic.Int64
 }
 
-func (up *Upstream) Init(config *Config) {
+func (up *Upstream) Init(config *Config, ipRanger cidranger.Ranger) {
 	var ok bool
 	up.protocol, up.hostAndPort, ok = strings.Cut(up.Address, "://")
 	if ok && up.protocol != "https" {
@@ -55,6 +53,7 @@ func (up *Upstream) Init(config *Config) {
 
 	up.count = atomic.NewInt64(0)
 	up.config = config
+	up.ipRanger = ipRanger
 }
 
 func (up *Upstream) Validate() error {
@@ -143,7 +142,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 	if !up.IsPrimary {
 		if debug {
-			log.Printf("checkPrimary %s: %s %v %v", up.Address, r.Question[0].Name, r.Answer, up.IsPrimary)
+			log.Printf("checkPrimary skip %s: %s %v %v", up.Address, r.Question[0].Name, r.Answer, up.IsPrimary)
 		}
 		return true
 	}
@@ -152,32 +151,17 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		if !ok {
 			continue
 		}
-		country, _, err := qqwry.QueryIP(a.A)
+		isPrimary, err := up.ipRanger.Contains(a.A)
 		if err != nil {
-			log.Printf("qqwry query ip %s failed: %s", a.A, err)
+			log.Printf("ipRanger query ip %s failed: %s", a.A, err)
 			return true
 		}
-		checkPrimary := up.checkPrimary(country)
 		if debug {
-			log.Printf("checkPrimary %s: %s@%s -> %s %v %v", up.Address, r.Question[0].Name, a.A, country, checkPrimary, up.IsPrimary)
+			log.Printf("checkPrimary result %s: %s@%s -> %v %v", up.Address, r.Question[0].Name, a.A, isPrimary, up.IsPrimary)
 		}
-		return checkPrimary
+		return isPrimary
 	}
 	return true
-}
-
-func (up *Upstream) checkPrimary(str string) bool {
-	for i := 0; i < len(nonPrimaryLocations); i++ {
-		if strings.Contains(str, nonPrimaryLocations[i]) {
-			return false
-		}
-	}
-	for i := 0; i < len(primaryLocations); i++ {
-		if strings.Contains(str, primaryLocations[i]) {
-			return true
-		}
-	}
-	return false
 }
 
 func (up *Upstream) poolLen() int {

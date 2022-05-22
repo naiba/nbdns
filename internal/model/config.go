@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/pkg/errors"
+	"github.com/yl2chen/cidranger"
 	"golang.org/x/net/proxy"
 )
 
@@ -27,7 +28,7 @@ type Config struct {
 	Profiling bool `json:"profiling,omitempty"`
 }
 
-func (c *Config) ReadInConfig(path string) error {
+func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
 	body, err := ioutil.ReadFile(path)
 	if err != nil {
 		return err
@@ -36,14 +37,14 @@ func (c *Config) ReadInConfig(path string) error {
 		return err
 	}
 	for i := 0; i < len(c.Bootstrap); i++ {
-		c.Bootstrap[i].Init(c)
+		c.Bootstrap[i].Init(c, ipRanger)
 		if net.ParseIP(c.Bootstrap[i].host) == nil {
 			return errors.New("Bootstrap 服务器只能使用 IP: " + c.Bootstrap[i].Address)
 		}
 		c.Bootstrap[i].InitConnectionPool(nil)
 	}
 	for i := 0; i < len(c.Upstreams); i++ {
-		c.Upstreams[i].Init(c)
+		c.Upstreams[i].Init(c, ipRanger)
 		if err := c.Upstreams[i].Validate(); err != nil {
 			return err
 		}

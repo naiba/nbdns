@@ -21,14 +21,14 @@
       use_socks: 可以为非 is_primary 启用 socks
    ```
 
-3. 从 <https://github.com/out0fmemory/qqwry.dat> 处下载 `qqwry_lastest.dat` 放置到 `data` 文件夹中
+3. 从 <https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt> 处下载 `china_ip_list.txt` 放置到 `data` 文件夹中
 4. 你的文件层级应该是这样的
 
    ```shell
    |- nbdns
    |- data
       |- config.json
-      |- qqwry_lastest.dat
+      |- china_ip_list.txt
    ```
 
 5. 启动 `./nbdns`

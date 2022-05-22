@@ -1,18 +1,21 @@
 package main
 
 import (
+	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 
 	"github.com/miekg/dns"
+	"github.com/yl2chen/cidranger"
 
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
-	"github.com/naiba/nbdns/pkg/qqwry"
 )
 
 var (
@@ -25,12 +28,10 @@ var (
 func init() {
 	log.SetOutput(os.Stdout)
 
-	if err := qqwry.LoadFile(dataPath+"/qqwry_lastest.dat", false); err != nil {
-		panic(err)
-	}
+	ipRanger := loadIPRanger(dataPath + "china_ip_list.txt")
 
 	config = &model.Config{}
-	if err := config.ReadInConfig(dataPath + "/config.json"); err != nil {
+	if err := config.ReadInConfig(dataPath+"/config.json", ipRanger); err != nil {
 		panic(err)
 	}
 
@@ -65,6 +66,31 @@ func main() {
 	server.ListenAndServe()
 }
 
+func loadIPRanger(path string) cidranger.Ranger {
+	ipRanger := cidranger.NewPCTrieRanger()
+
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	lines := strings.Split(string(content), "\n")
+
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		_, network, err := net.ParseCIDR(lines[i])
+		if err != nil {
+			panic(err)
+		}
+		if err := ipRanger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
+			panic(err)
+		}
+	}
+
+	return ipRanger
+}
+
 func detectDataPath() string {
 	ex, err := os.Executable()
 	if err != nil {
@@ -77,12 +103,13 @@ func detectDataPath() string {
 	pathList := []string{filepath.Dir(ex), pwd}
 
 	for _, path := range pathList {
-		if f, err := os.Stat(path + "/data/qqwry_lastest.dat"); err == nil {
-			if f.Size() < 1024*1024*5 {
-				panic("离线IP库 qqwry_lastest.dat 文件损坏，请重新下载")
+		if f, err := os.Stat(path + "/data/china_ip_list.txt"); err == nil {
+			if f.Size() == 1024*200 {
+				panic("离线IP库 china_ip_list.txt 文件损坏，请重新下载")
 			}
 			return path + "/data/"
 		}
 	}
+
 	panic("没有检测到数据目录")
 }
