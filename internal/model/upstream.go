@@ -124,6 +124,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 		up.dohClient = doh.NewClient(doh.WithServer(up.Address),
 			doh.WithDebug(up.config.Debug), doh.WithBootstrap(bootstrap),
 			doh.WithSocksProxy(up.config.GetDialerContext),
+			doh.WithTimeout(time.Second*time.Duration(up.config.Timeout)),
 		)
 	}
 
