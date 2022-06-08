@@ -19,8 +19,6 @@ import (
 	"github.com/naiba/nbdns/pkg/doh"
 )
 
-const defaultTimeout = time.Second * 2
-
 type Upstream struct {
 	IsPrimary bool   `json:"is_primary,omitempty"`
 	UseSocks  bool   `json:"use_socks,omitempty"`
@@ -90,7 +88,7 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 
 	if up.UseSocks {
 		d, _, err := up.config.GetDialerContext(&net.Dialer{
-			Timeout: defaultTimeout,
+			Timeout: time.Second * time.Duration(up.config.Timeout),
 		})
 		if err != nil {
 			return nil, err
@@ -107,7 +105,7 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 		}
 	} else {
 		var d net.Dialer
-		d.Timeout = defaultTimeout
+		d.Timeout = time.Second * time.Duration(up.config.Timeout)
 		switch up.protocol {
 		case "tcp":
 			return d.Dial(up.protocol, addr)
@@ -182,25 +180,25 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		return up.dohClient.Exchange(req)
 	case "udp":
 		client := new(dns.Client)
-		client.Timeout = defaultTimeout
+		client.Timeout = time.Second * time.Duration(up.config.Timeout)
 		return client.Exchange(req, up.hostAndPort)
 	case "tcp", "tcp-tls":
-		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(up.config.Timeout))
 		defer cancel()
 		conn, err := up.pool.Get(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
-		resp, err := dnsExchangeWithConn(conn, req)
+		resp, err := dnsExchangeWithConn(conn, req, time.Second*time.Duration(up.config.Timeout))
 		return resp, 0, err
 	}
 	panic(fmt.Sprintf("invalid upstream protocol: %s in address %s", up.protocol, up.Address))
 }
 
-func dnsExchangeWithConn(conn net.Conn, req *dns.Msg) (*dns.Msg, error) {
+func dnsExchangeWithConn(conn net.Conn, req *dns.Msg, timeout time.Duration) (*dns.Msg, error) {
 	var resp *dns.Msg
 	co := dns.Conn{Conn: conn}
-	co.Conn.SetDeadline(time.Now().Add(defaultTimeout))
+	co.Conn.SetDeadline(time.Now().Add(timeout))
 	err := co.WriteMsg(req)
 	if err == nil {
 		resp, err = co.ReadMsg()

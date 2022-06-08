@@ -2,6 +2,7 @@
     "debug": false,
     "profiling": false,
     "strategy": 2,
+    "timeout": 2,
     "serve_addr": "127.0.0.1:8853",
     "socks_proxy": "",
     "bootstrap": [

@@ -2,7 +2,7 @@
 
 [![release](https://img.shields.io/github/v/release/naiba/nbdns?color=brightgreen&label=NbDNS&style=for-the-badge&logo=github)](https://github.com/naiba/nbdns/releases)
 
-:seal: 一个聪明的 DNS 中继器，放置于 AdGuard Home 上游，可提升 DNS 解析体验。
+:seal: 一个聪明的 DNS 中继器，放置于 AdGuard Home 上游，可提升 DNS 解析准确性。
 
 ![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
 
@@ -15,6 +15,7 @@
       1: 最全结果
       2: 最快结果
       3: 任一结果（不建议使用）
+   timeout: 超时时间（秒）
    bootstrap: 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
    upstreams: 上游 DNS 列表
       is_primary: 将国内 DNS 的 is_primary 标记为 true
@@ -45,8 +46,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
 ## FAQ
 
-<details>
-    <summary>OpenWRT 自启动</summary>
+### OpenWRT 自启动
 
 首先在 release 下载对应的二进制解压 zip 包后放置到 `/root`，然后 `chmod -R 777 /root/nbdns` 赋予执行权限，然后创建 `/etc/init.d/nbdns`：
 
@@ -81,5 +81,3 @@ restart() {
 ```
 
 赋予执行权限 `chmod +x /etc/init.d/nbdns` 然后启动服务 `/etc/init.d/nbdns enable && /etc/init.d/nbdns start`
-
-</details>

@@ -20,6 +20,7 @@ const (
 type Config struct {
 	ServeAddr  string     `json:"serve_addr,omitempty"`
 	Strategy   int        `json:"strategy,omitempty"`
+	Timeout    int        `json:"timeout,omitempty"`
 	SocksProxy string     `json:"socks_proxy,omitempty"`
 	Upstreams  []Upstream `json:"upstreams,omitempty"`
 	Bootstrap  []Upstream `json:"bootstrap,omitempty"`

@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	dohMediaType               = "application/dns-message"
-	httpTimeout  time.Duration = 2 * time.Second
+	dohMediaType = "application/dns-message"
 )
 
 type clientOptions struct {
@@ -66,13 +65,6 @@ func WithBootstrap(resolver func(domain string) (net.IP, error)) ClientOption {
 	}
 }
 
-func (o clientOptions) Timeout() time.Duration {
-	if o.timeout != 0 {
-		return o.timeout
-	}
-	return httpTimeout
-}
-
 type Client struct {
 	opt      *clientOptions
 	cli      *http.Client
@@ -107,7 +99,7 @@ func NewClient(opts ...ClientOption) *Client {
 
 				if o.getDialer != nil {
 					dialer, _, err := o.getDialer(&net.Dialer{
-						Timeout: o.Timeout(),
+						Timeout: o.timeout,
 					})
 					if err != nil {
 						return nil, err
@@ -116,7 +108,7 @@ func NewClient(opts ...ClientOption) *Client {
 				}
 
 				return (&net.Dialer{
-					Timeout: httpTimeout,
+					Timeout: o.timeout,
 				}).DialContext(ctx, network, strings.Join(urls, ":"))
 			},
 		}
@@ -127,7 +119,7 @@ func NewClient(opts ...ClientOption) *Client {
 		traceCtx: httptrace.WithClientTrace(context.Background(), clientTrace),
 		cli: &http.Client{
 			Transport: transport,
-			Timeout:   o.Timeout(),
+			Timeout:   o.timeout,
 		},
 	}
 }
