@@ -40,6 +40,40 @@ archives:
     format: zip
     files:
       - none*
+dockers:
+  - use: buildx
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/naiba/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/naiba/{{ .ProjectName }}:latest-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+  - use: buildx
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/naiba/{{ .ProjectName }}:{{ .Version }}-arm64v8"
+      - "ghcr.io/naiba/{{ .ProjectName }}:latest-arm64v8"
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+docker_manifests:
+  - name_template: ghcr.io/naiba/{{ .ProjectName }}:{{ .Version }}
+    image_templates:
+      - ghcr.io/naiba/{{ .ProjectName }}:{{ .Version }}-amd64
+      - ghcr.io/naiba/{{ .ProjectName }}:{{ .Version }}-arm64v8
+  - name_template: ghcr.io/naiba/{{ .ProjectName }}:latest
+    image_templates:
+      - ghcr.io/naiba/{{ .ProjectName }}:latest-amd64
+      - ghcr.io/naiba/{{ .ProjectName }}:latest-arm64v8
 changelog:
   sort: asc
   filters:

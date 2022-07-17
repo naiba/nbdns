@@ -46,6 +46,12 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
 ## FAQ
 
+### Docker
+
+```shell
+docker run -d -v data路径:/nbdns/data -p 配置的serve_addr端口:配置的serve_addr端口 ghcr.io/naiba/nbdns
+```
+
 ### OpenWRT 自启动
 
 首先在 release 下载对应的二进制解压 zip 包后放置到 `/root`，然后 `chmod -R 777 /root/nbdns` 赋予执行权限，然后创建 `/etc/init.d/nbdns`：
