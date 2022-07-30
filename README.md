@@ -49,7 +49,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 ### Docker
 
 ```shell
-docker run -d -v data路径:/nbdns/data -p 配置的serve_addr端口:配置的serve_addr端口 ghcr.io/naiba/nbdns
+docker run -name nbdns --restart always -d -v data路径:/nbdns/data -p 配置的serve_addr端口:配置的serve_addr端口/udp ghcr.io/naiba/nbdns
 ```
 
 ### OpenWRT 自启动
