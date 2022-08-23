@@ -2,8 +2,8 @@ package model
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"net"
+	"os"
 
 	"github.com/pkg/errors"
 	"github.com/yl2chen/cidranger"
@@ -30,7 +30,7 @@ type Config struct {
 }
 
 func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
-	body, err := ioutil.ReadFile(path)
+	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}

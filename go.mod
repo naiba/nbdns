@@ -1,9 +1,9 @@
 module github.com/naiba/nbdns
 
-go 1.18
+go 1.19
 
 require (
-	github.com/buraksezer/connpool v0.5.0
+	github.com/dropbox/godropbox v0.0.0-20220817175148-f0626942059b
 	github.com/miekg/dns v1.1.48
 	github.com/pkg/errors v0.9.1
 	github.com/yl2chen/cidranger v1.0.2

@@ -1,7 +1,6 @@
 package model
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -10,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buraksezer/connpool"
+	"github.com/dropbox/godropbox/net2"
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
 	"github.com/yl2chen/cidranger"
@@ -28,7 +27,7 @@ type Upstream struct {
 	config                            *Config
 	ipRanger                          cidranger.Ranger
 
-	pool      connpool.Pool
+	pool      net2.ConnectionPool
 	dohClient *doh.Client
 	bootstrap func(host string) (net.IP, error)
 
@@ -70,19 +69,22 @@ func (up *Upstream) Validate() error {
 	return nil
 }
 
-func (up *Upstream) conntionFactory() (net.Conn, error) {
+func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
 	if up.config.Debug {
-		log.Printf("connecting to %s", up.Address)
+		log.Printf("connecting to %s://%s", network, address)
 	}
 
-	addr := up.hostAndPort
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
 
 	if up.bootstrap != nil {
-		ip, err := up.bootstrap(up.host)
+		ip, err := up.bootstrap(host)
 		if err != nil {
-			addr = fmt.Sprintf("%s:%s", "0.0.0.0", up.port)
+			address = fmt.Sprintf("%s:%s", "0.0.0.0", port)
 		} else {
-			addr = fmt.Sprintf("%s:%s", ip.String(), up.port)
+			address = fmt.Sprintf("%s:%s", ip.String(), port)
 		}
 	}
 
@@ -93,11 +95,11 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		switch up.protocol {
+		switch network {
 		case "tcp":
-			return d.Dial(up.protocol, addr)
+			return d.Dial(network, address)
 		case "tcp-tls":
-			conn, err := d.Dial("tcp", addr)
+			conn, err := d.Dial("tcp", address)
 			if err != nil {
 				return nil, err
 			}
@@ -106,15 +108,15 @@ func (up *Upstream) conntionFactory() (net.Conn, error) {
 	} else {
 		var d net.Dialer
 		d.Timeout = time.Second * time.Duration(up.config.Timeout)
-		switch up.protocol {
+		switch network {
 		case "tcp":
-			return d.Dial(up.protocol, addr)
+			return d.Dial(network, address)
 		case "tcp-tls":
-			return tls.DialWithDialer(&d, "tcp", addr, nil)
+			return tls.DialWithDialer(&d, "tcp", address, nil)
 		}
 	}
 
-	panic("wrong protocol: " + up.protocol)
+	panic("wrong protocol: " + network)
 }
 
 func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, error)) {
@@ -130,10 +132,17 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 
 	// 只需要启用 tcp/tcp-tls 协议的连接池
 	if strings.Contains(up.protocol, "tcp") {
-		p, err := connpool.NewChannelPool(0, 10, up.conntionFactory)
-		if err != nil {
-			log.Panicf("init upstream connection pool failed: %s", err)
-		}
+		maxIdleTime := time.Second * time.Duration(up.config.Timeout)
+		p := net2.NewSimpleConnectionPool(net2.ConnectionOptions{
+			MaxActiveConnections: 10,
+			MaxIdleConnections:   5,
+			MaxIdleTime:          &maxIdleTime,
+			DialMaxConcurrency:   10,
+			ReadTimeout:          maxIdleTime,
+			WriteTimeout:         maxIdleTime,
+			Dial:                 up.conntionFactory,
+		})
+		p.Register(up.protocol, up.hostAndPort)
 		up.pool = p
 	}
 }
@@ -163,11 +172,11 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 	return true
 }
 
-func (up *Upstream) poolLen() int {
+func (up *Upstream) poolLen() int32 {
 	if up.pool == nil {
 		return 0
 	}
-	return up.pool.Len()
+	return up.pool.NumActive()
 }
 
 func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
@@ -184,33 +193,27 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		client.Timeout = time.Second * time.Duration(up.config.Timeout)
 		return client.Exchange(req, up.hostAndPort)
 	case "tcp", "tcp-tls":
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(up.config.Timeout))
-		defer cancel()
-		conn, err := up.pool.Get(ctx)
+		conn, err := up.pool.Get(up.protocol, up.hostAndPort)
 		if err != nil {
 			return nil, 0, err
 		}
-		resp, err := dnsExchangeWithConn(conn, req, time.Second*time.Duration(up.config.Timeout))
+		resp, err := dnsExchangeWithConn(conn, req)
 		return resp, 0, err
 	}
 	panic(fmt.Sprintf("invalid upstream protocol: %s in address %s", up.protocol, up.Address))
 }
 
-func dnsExchangeWithConn(conn net.Conn, req *dns.Msg, timeout time.Duration) (*dns.Msg, error) {
+func dnsExchangeWithConn(conn net2.ManagedConn, req *dns.Msg) (*dns.Msg, error) {
 	var resp *dns.Msg
 	co := dns.Conn{Conn: conn}
-	co.Conn.SetDeadline(time.Now().Add(timeout))
 	err := co.WriteMsg(req)
 	if err == nil {
 		resp, err = co.ReadMsg()
 	}
-	if err != nil {
-		c, yes := conn.(*connpool.PoolConn)
-		if yes {
-			c.MarkUnusable()
-		}
+	if err == nil {
+		conn.ReleaseConnection()
+	} else {
+		conn.DiscardConnection()
 	}
-	conn.SetDeadline(time.Time{})
-	co.Close()
 	return resp, err
 }
