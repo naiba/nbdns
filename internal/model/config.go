@@ -18,12 +18,13 @@ const (
 )
 
 type Config struct {
-	ServeAddr  string     `json:"serve_addr,omitempty"`
-	Strategy   int        `json:"strategy,omitempty"`
-	Timeout    int        `json:"timeout,omitempty"`
-	SocksProxy string     `json:"socks_proxy,omitempty"`
-	Upstreams  []Upstream `json:"upstreams,omitempty"`
-	Bootstrap  []Upstream `json:"bootstrap,omitempty"`
+	ServeAddr    string     `json:"serve_addr,omitempty"`
+	Strategy     int        `json:"strategy,omitempty"`
+	Timeout      int        `json:"timeout,omitempty"`
+	SocksProxy   string     `json:"socks_proxy,omitempty"`
+	BuiltInCache bool       `json:"built_in_cache,omitempty"`
+	Upstreams    []Upstream `json:"upstreams,omitempty"`
+	Bootstrap    []Upstream `json:"bootstrap,omitempty"`
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`

@@ -5,6 +5,7 @@
     "timeout": 2,
     "serve_addr": "127.0.0.1:8853",
     "socks_proxy": "",
+    "built_in_cache": false,
     "bootstrap": [
         {
             "address": "udp://223.5.5.5:53"

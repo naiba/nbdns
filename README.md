@@ -10,13 +10,14 @@
 2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
-   socks_proxy: 你的路由上的 socks5 服务，格式 "192.168.55.254:9050"
-   strategy:
-      1: 最全结果
-      2: 最快结果（推荐）
-      3: 任一结果（不建议使用）
-   timeout: 超时时间（秒）
-   bootstrap: 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
+   socks_proxy: "192.168.55.254:9050" # 你的路由上的 socks5 服务
+   strategy: 2
+      # 1 - 最全结果
+      # 2 - 最快结果（推荐）
+      # 3 - 任一结果（不建议使用）
+   timeout: 4 # 超时时间（秒）
+   built_in_cache: false # 启用内建缓存
+   bootstrap: "223.5.5.5" # 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
    upstreams: 上游 DNS 列表（首推使用 tcp-tls）
       is_primary: 将国内 DNS 的 is_primary 标记为 true
       use_socks: 可以为非 is_primary 启用 socks5

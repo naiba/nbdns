@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -35,7 +34,7 @@ func init() {
 		panic(err)
 	}
 
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, config.Bootstrap, config.Debug)
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, config.Debug)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -45,13 +44,14 @@ func init() {
 func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 
-	upstreamHandler := handler.NewHandler(config.Strategy, config.Upstreams, config.Debug)
+	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, config.Debug)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	log.Println("==== DNS Server ====")
 	log.Println("端口:", config.ServeAddr)
 	log.Println("模式:", config.StrategyName())
 	log.Println("数据:", dataPath)
+	log.Println("启用内置缓存:", config.BuiltInCache)
 	log.Println("版本:", version)
 
 	if config.Profiling {
@@ -69,7 +69,7 @@ func main() {
 func loadIPRanger(path string) cidranger.Ranger {
 	ipRanger := cidranger.NewPCTrieRanger()
 
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
 	}

@@ -6,21 +6,28 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
+	"github.com/patrickmn/go-cache"
 )
 
 type Handler struct {
-	strategy  int
-	upstreams []model.Upstream
-	debug     bool
+	strategy     int
+	upstreams    []model.Upstream
+	builtInCache *cache.Cache
+	debug        bool
 }
 
-func NewHandler(strategy int,
+func NewHandler(strategy int, builtInCache bool,
 	upstreams []model.Upstream,
 	debug bool) *Handler {
-	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug}
+	var c *cache.Cache
+	if builtInCache {
+		c = cache.New(time.Minute, time.Minute*10)
+	}
+	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c}
 }
 
 func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
@@ -88,10 +95,66 @@ func (h *Handler) Exchange(req *dns.Msg) *dns.Msg {
 	return res
 }
 
+type CachedMsg struct {
+	msg     *dns.Msg
+	expires time.Time
+}
+
+func getDnsRequestCacheKey(m *dns.Msg) string {
+	var edns string
+	o := m.IsEdns0()
+	if o != nil {
+		for _, s := range o.Option {
+			switch e := s.(type) {
+			case *dns.EDNS0_SUBNET:
+				edns = e.Address.String()
+			}
+		}
+	}
+	return m.Question[0].Name + "#" + edns
+}
+
+func getDnsResponseTtl(m *dns.Msg) time.Duration {
+	var ttl uint32
+	if len(m.Answer) == 0 {
+		ttl = 60 // 最小 ttl 1 分钟
+	} else {
+		ttl = m.Answer[0].Header().Ttl
+	}
+	return time.Duration(ttl) * time.Second
+}
+
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
+	var m string
+	if h.builtInCache != nil {
+		m = getDnsRequestCacheKey(req)
+		if v, ok := h.builtInCache.Get(m); ok {
+			v := v.(*CachedMsg)
+			res := v.msg.Copy()
+			// 更新缓存的 answer 的 TTL
+			for i := 0; i < len(res.Answer); i++ {
+				header := res.Answer[i].Header()
+				if header == nil {
+					continue
+				}
+				header.Ttl = uint32(time.Until(v.expires).Seconds())
+			}
+			res.SetReply(req)
+			w.WriteMsg(res)
+			return
+		}
+	}
+
 	res := h.Exchange(req)
 	res.SetReply(req)
 	w.WriteMsg(res)
+
+	if h.builtInCache != nil {
+		h.builtInCache.Set(m, &CachedMsg{
+			msg:     res,
+			expires: time.Now().Add(getDnsResponseTtl(res)),
+		}, getDnsResponseTtl(res))
+	}
 }
 
 func uniqueAnswer(intSlice []dns.RR) []dns.RR {
