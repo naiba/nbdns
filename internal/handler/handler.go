@@ -121,6 +121,9 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 	} else {
 		ttl = m.Answer[0].Header().Ttl
 	}
+	if ttl > 3600 {
+		ttl = 3600 // 最大 ttl 1 小时
+	}
 	return time.Duration(ttl) * time.Second
 }
 
