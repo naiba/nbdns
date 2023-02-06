@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -111,7 +112,7 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 			}
 		}
 	}
-	return m.Question[0].Name + "#" + edns
+	return m.Question[0].Name + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {
