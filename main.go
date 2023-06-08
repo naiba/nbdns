@@ -43,6 +43,7 @@ func init() {
 
 func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
+	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
 	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, config.Debug)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
@@ -63,7 +64,17 @@ func main() {
 		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/heap")
 	}
 
-	server.ListenAndServe()
+	stopCh := make(chan error)
+
+	go func() {
+		stopCh <- server.ListenAndServe()
+	}()
+
+	go func() {
+		stopCh <- serverTCP.ListenAndServe()
+	}()
+
+	log.Printf("server stopped: %+v", <-stopCh)
 }
 
 func loadIPRanger(path string) cidranger.Ranger {

@@ -129,35 +129,47 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 }
 
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
+	if h.debug {
+		log.Printf("HandleRequest req: %+v\n", req)
+	}
+
 	var m string
 	if h.builtInCache != nil {
 		m = getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(m); ok {
 			v := v.(*CachedMsg)
-			res := v.msg.Copy()
+			resp := v.msg.Copy()
 			// 更新缓存的 answer 的 TTL
-			for i := 0; i < len(res.Answer); i++ {
-				header := res.Answer[i].Header()
+			for i := 0; i < len(resp.Answer); i++ {
+				header := resp.Answer[i].Header()
 				if header == nil {
 					continue
 				}
 				header.Ttl = uint32(time.Until(v.expires).Seconds())
 			}
-			res.SetReply(req)
-			w.WriteMsg(res)
+			resp.SetReply(req)
+			if err := w.WriteMsg(resp); err != nil {
+				log.Printf("WriteMsg from cache error: %+v", err)
+			}
 			return
 		}
 	}
 
-	res := h.Exchange(req)
-	res.SetReply(req)
-	w.WriteMsg(res)
+	resp := h.Exchange(req)
+	resp.SetReply(req)
+	if err := w.WriteMsg(resp); err != nil {
+		log.Printf("WriteMsg from response error: %+v", err)
+	}
+
+	if h.debug {
+		log.Printf("HandleRequest resp: %+v\n", resp)
+	}
 
 	if h.builtInCache != nil {
 		h.builtInCache.Set(m, &CachedMsg{
-			msg:     res,
-			expires: time.Now().Add(getDnsResponseTtl(res)),
-		}, getDnsResponseTtl(res))
+			msg:     resp,
+			expires: time.Now().Add(getDnsResponseTtl(resp)),
+		}, getDnsResponseTtl(resp))
 	}
 }
 
