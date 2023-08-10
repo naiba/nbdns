@@ -21,7 +21,7 @@
    upstreams: 上游 DNS 列表（首推使用 tcp-tls）
       is_primary: 将国内 DNS 的 is_primary 标记为 true
       use_socks: 可以为非 is_primary 启用 socks5
-      prefer_domain: # 优先的后缀列表，比如 onion，可以转为某个后缀定义上游
+      prefer_domain: # 优先的后缀列表，比如 Tor 的 onion，可以专门某个后缀定义上游
          - onion
    doh_server:
       host: 0.0.0.0:8053 # DoH 服务器端口
