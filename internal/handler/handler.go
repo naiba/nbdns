@@ -15,20 +15,46 @@ import (
 )
 
 type Handler struct {
-	strategy     int
-	upstreams    []model.Upstream
-	builtInCache *cache.Cache
-	debug        bool
+	strategy              int
+	upstreams             []*model.Upstream
+	preferDomainUpstreams map[string][]*model.Upstream
+	builtInCache          *cache.Cache
+	debug                 bool
 }
 
 func NewHandler(strategy int, builtInCache bool,
-	upstreams []model.Upstream,
+	upstreams []*model.Upstream,
 	debug bool) *Handler {
 	var c *cache.Cache
 	if builtInCache {
 		c = cache.New(time.Minute, time.Minute*10)
 	}
-	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c}
+	var preferDomainUpstreams = make(map[string][]*model.Upstream)
+	for _, u := range upstreams {
+		for _, d := range u.PreferDomain {
+			preferDomainUpstreams[d] = append(preferDomainUpstreams[d], u)
+		}
+	}
+	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c, preferDomainUpstreams: preferDomainUpstreams}
+}
+
+func (h *Handler) preferUpstreams(req *dns.Msg) []*model.Upstream {
+	if len(req.Question) == 0 {
+		return h.upstreams
+	}
+	q := req.Question[0]
+	if q.Qtype != dns.TypeA && q.Qtype != dns.TypeAAAA {
+		return h.upstreams
+	}
+	suffixs := strings.Split(q.Name, ".")
+	if len(suffixs) < 2 {
+		return h.upstreams
+	}
+	preferUpstreams := h.preferDomainUpstreams[suffixs[len(suffixs)-2]]
+	if len(preferUpstreams) > 0 {
+		return preferUpstreams
+	}
+	return h.upstreams
 }
 
 func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
@@ -187,19 +213,20 @@ func uniqueAnswer(intSlice []dns.RR) []dns.RR {
 }
 
 func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
+	preferUpstreams := h.preferUpstreams(req)
 	var wg sync.WaitGroup
-	wg.Add(len(h.upstreams))
-	msgs := make([]*dns.Msg, len(h.upstreams))
+	wg.Add(len(preferUpstreams))
+	msgs := make([]*dns.Msg, len(preferUpstreams))
 
-	for i := 0; i < len(h.upstreams); i++ {
+	for i := 0; i < len(preferUpstreams); i++ {
 		go func(j int) {
 			defer wg.Done()
-			msg, _, err := h.upstreams[j].Exchange(req.Copy())
+			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
 				return
 			}
-			if h.upstreams[j].IsValidMsg(h.debug, msg) {
+			if preferUpstreams[j].IsValidMsg(h.debug, msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -210,7 +237,8 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 }
 
 func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
-	msgs := make([]*dns.Msg, len(h.upstreams))
+	preferUpstreams := h.preferUpstreams(req)
+	msgs := make([]*dns.Msg, len(preferUpstreams))
 
 	var mutex sync.Mutex
 	var finishedCount int
@@ -220,11 +248,11 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 	var wg sync.WaitGroup
 	wg.Add(1)
 
-	for i := 0; i < len(h.upstreams); i++ {
+	for i := 0; i < len(preferUpstreams); i++ {
 		go func(j int) {
-			msg, _, err := h.upstreams[j].Exchange(req.Copy())
+			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
 			}
 
 			mutex.Lock()
@@ -237,21 +265,21 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 			}
 
 			if err == nil {
-				if h.upstreams[j].IsValidMsg(h.debug, msg) {
-					if h.upstreams[j].IsPrimary {
+				if preferUpstreams[j].IsValidMsg(h.debug, msg) {
+					if preferUpstreams[j].IsPrimary {
 						primaryIndex = append(primaryIndex, j)
 					} else {
 						freedomIndex = append(freedomIndex, j)
 					}
 					msgs[j] = msg
-				} else if h.upstreams[j].IsPrimary {
+				} else if preferUpstreams[j].IsPrimary {
 					// 策略：国内 DNS 返回了 国外 服务器，计数但是不记入结果，以 国外 DNS 为准
 					primaryIndex = append(primaryIndex, j)
 				}
 			}
 
 			// 全部结束直接退出
-			if finishedCount == len(h.upstreams) {
+			if finishedCount == len(preferUpstreams) {
 				finished = true
 				wg.Done()
 				return
@@ -277,18 +305,20 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 }
 
 func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
+	preferUpstreams := h.preferUpstreams(req)
+
 	var wg sync.WaitGroup
 	wg.Add(1)
-	msgs := make([]*dns.Msg, len(h.upstreams))
+	msgs := make([]*dns.Msg, len(preferUpstreams))
 	var mutex sync.Mutex
 	var finishedCount int
 	var finished bool
 
-	for i := 0; i < len(h.upstreams); i++ {
+	for i := 0; i < len(preferUpstreams); i++ {
 		go func(j int) {
-			msg, _, err := h.upstreams[j].Exchange(req.Copy())
+			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", h.upstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
 			}
 			mutex.Lock()
 			defer mutex.Unlock()
@@ -299,7 +329,7 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 			}
 
 			// 已结束或任意上游返回成功时退出
-			if err == nil || finishedCount == len(h.upstreams) {
+			if err == nil || finishedCount == len(preferUpstreams) {
 				finished = true
 				msgs[j] = msg
 				wg.Done()

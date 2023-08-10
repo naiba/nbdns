@@ -15,6 +15,7 @@ import (
 
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
+	"github.com/naiba/nbdns/pkg/doh"
 )
 
 var (
@@ -53,14 +54,18 @@ func main() {
 	log.Println("模式:", config.StrategyName())
 	log.Println("数据:", dataPath)
 	log.Println("启用内置缓存:", config.BuiltInCache)
+	if config.DohServer != nil {
+		log.Println("启用 DoH 服务器:", config.DohServer.Host)
+	}
 	log.Println("版本:", version)
 
 	if config.Profiling {
-		http.HandleFunc("/debug/goroutine", func(w http.ResponseWriter, r *http.Request) {
+		debugServerHandler := http.NewServeMux()
+		debugServerHandler.HandleFunc("/debug/goroutine", func(w http.ResponseWriter, r *http.Request) {
 			profile := pprof.Lookup("goroutine")
 			profile.WriteTo(w, 2)
 		})
-		go http.ListenAndServe(":8854", nil)
+		go http.ListenAndServe(":8854", debugServerHandler)
 		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/heap")
 	}
 
@@ -69,10 +74,13 @@ func main() {
 	go func() {
 		stopCh <- server.ListenAndServe()
 	}()
-
 	go func() {
 		stopCh <- serverTCP.ListenAndServe()
 	}()
+	if config.DohServer != nil {
+		dohServer := doh.NewServer(config.DohServer.Host, config.DohServer.Username, config.DohServer.Password, upstreamHandler.Exchange)
+		stopCh <- dohServer.Serve()
+	}
 
 	log.Printf("server stopped: %+v", <-stopCh)
 }

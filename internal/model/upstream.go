@@ -19,9 +19,10 @@ import (
 )
 
 type Upstream struct {
-	IsPrimary bool   `json:"is_primary,omitempty"`
-	UseSocks  bool   `json:"use_socks,omitempty"`
-	Address   string `json:"address,omitempty"`
+	IsPrimary    bool     `json:"is_primary,omitempty"`
+	UseSocks     bool     `json:"use_socks,omitempty"`
+	Address      string   `json:"address,omitempty"`
+	PreferDomain []string `json:"prefer_domain,omitempty"`
 
 	protocol, hostAndPort, host, port string
 	config                            *Config

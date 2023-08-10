@@ -17,14 +17,21 @@ const (
 	StrategyAnyResult
 )
 
+type DohServerConfig struct {
+	Host     string `json:"host,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
 type Config struct {
-	ServeAddr    string     `json:"serve_addr,omitempty"`
-	Strategy     int        `json:"strategy,omitempty"`
-	Timeout      int        `json:"timeout,omitempty"`
-	SocksProxy   string     `json:"socks_proxy,omitempty"`
-	BuiltInCache bool       `json:"built_in_cache,omitempty"`
-	Upstreams    []Upstream `json:"upstreams,omitempty"`
-	Bootstrap    []Upstream `json:"bootstrap,omitempty"`
+	ServeAddr    string           `json:"serve_addr,omitempty"`
+	DohServer    *DohServerConfig `json:"doh_server,omitempty"`
+	Strategy     int              `json:"strategy,omitempty"`
+	Timeout      int              `json:"timeout,omitempty"`
+	SocksProxy   string           `json:"socks_proxy,omitempty"`
+	BuiltInCache bool             `json:"built_in_cache,omitempty"`
+	Upstreams    []*Upstream      `json:"upstreams,omitempty"`
+	Bootstrap    []*Upstream      `json:"bootstrap,omitempty"`
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`

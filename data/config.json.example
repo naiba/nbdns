@@ -6,6 +6,11 @@
     "serve_addr": "127.0.0.1:8853",
     "socks_proxy": "",
     "built_in_cache": false,
+    "doh_server": {
+        "host": "127.0.0.1:8053",
+        "username": "user",
+        "password": "password"
+    },
     "bootstrap": [
         {
             "address": "udp://223.5.5.5:53"
@@ -37,7 +42,10 @@
         },
         {
             "address": "https://dns.google/dns-query",
-            "use_socks": false
+            "use_socks": false,
+            "prefer_domain": [
+                "onion"
+            ]
         }
     ]
 }

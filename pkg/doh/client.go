@@ -142,6 +142,8 @@ func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err erro
 
 	hreq, _ := http.NewRequestWithContext(c.traceCtx, http.MethodGet, c.opt.server+"?dns="+string(b64), nil)
 	hreq.Header.Add("Accept", dohMediaType)
+	hreq.Header.Add("User-Agent", "nbdns-doh-client/0.1")
+
 	resp, err := c.cli.Do(hreq)
 	if err != nil {
 		return
