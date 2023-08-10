@@ -1,6 +1,7 @@
 package doh
 
 import (
+	"encoding/base64"
 	"net/http"
 
 	"github.com/miekg/dns"
@@ -42,20 +43,30 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg := new(dns.Msg)
-	if err := msg.Unpack([]byte(query)); err != nil {
+	data, err := base64.StdEncoding.DecodeString(query)
+	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
+	msg := new(dns.Msg)
+	if err := msg.Unpack(data); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
 		return
 	}
 	resp := s.handler(msg)
 	if resp == nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("nil response"))
 		return
 	}
 
-	data, err := resp.Pack()
+	data, err = resp.Pack()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(err.Error()))
 		return
 	}
 

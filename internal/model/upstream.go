@@ -124,11 +124,16 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 	up.bootstrap = bootstrap
 
 	if strings.Contains(up.protocol, "http") {
-		up.dohClient = doh.NewClient(doh.WithServer(up.Address),
-			doh.WithDebug(up.config.Debug), doh.WithBootstrap(bootstrap),
-			doh.WithSocksProxy(up.config.GetDialerContext),
-			doh.WithTimeout(time.Second*time.Duration(up.config.Timeout)),
-		)
+		ops := []doh.ClientOption{
+			doh.WithServer(up.Address),
+			doh.WithDebug(up.config.Debug),
+			doh.WithBootstrap(bootstrap),
+			doh.WithTimeout(time.Second * time.Duration(up.config.Timeout)),
+		}
+		if up.UseSocks {
+			ops = append(ops, doh.WithSocksProxy(up.config.GetDialerContext))
+		}
+		up.dohClient = doh.NewClient(ops...)
 	}
 
 	// 只需要启用 tcp/tcp-tls 协议的连接池
@@ -151,7 +156,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 	if !up.IsPrimary {
 		if debug {
-			log.Printf("checkPrimary skip %s: %s %v %v", up.Address, r.Question[0].Name, r.Answer, up.IsPrimary)
+			log.Printf("checkPrimary skip %s: %s %v %v", up.Address, GetDomainNameFronDnsMsg(r), r.Answer, up.IsPrimary)
 		}
 		return true
 	}
@@ -166,11 +171,18 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 			return true
 		}
 		if debug {
-			log.Printf("checkPrimary result %s: %s@%s -> %v %v", up.Address, r.Question[0].Name, a.A, isPrimary, up.IsPrimary)
+			log.Printf("checkPrimary result %s: %s@%s -> %v %v", up.Address, GetDomainNameFronDnsMsg(r), a.A, isPrimary, up.IsPrimary)
 		}
 		return isPrimary
 	}
 	return true
+}
+
+func GetDomainNameFronDnsMsg(msg *dns.Msg) string {
+	if len(msg.Question) > 0 {
+		return msg.Question[0].Name
+	}
+	return ""
 }
 
 func (up *Upstream) poolLen() int32 {
@@ -187,7 +199,7 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	}
 
 	switch up.protocol {
-	case "https":
+	case "https", "http":
 		return up.dohClient.Exchange(req)
 	case "udp":
 		client := new(dns.Client)

@@ -138,7 +138,7 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 			}
 		}
 	}
-	return m.Question[0].Name + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns
+	return model.GetDomainNameFronDnsMsg(m) + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {
@@ -223,7 +223,7 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 			defer wg.Done()
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
 				return
 			}
 			if preferUpstreams[j].IsValidMsg(h.debug, msg) {
@@ -252,7 +252,7 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 		go func(j int) {
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
 			}
 
 			mutex.Lock()
@@ -318,7 +318,7 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 		go func(j int) {
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, req.Question[0].Name, err)
+				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
 			}
 			mutex.Lock()
 			defer mutex.Unlock()
