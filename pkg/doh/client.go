@@ -134,11 +134,11 @@ func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err erro
 	// Set DNS ID as zero accoreding to RFC8484 (cache friendly)
 	req.Id = 0
 	buf, err = req.Pack()
-	b64 = make([]byte, base64.RawURLEncoding.EncodedLen(len(buf)))
+	b64 = make([]byte, base64.StdEncoding.EncodedLen(len(buf)))
 	if err != nil {
 		return
 	}
-	base64.RawURLEncoding.Encode(b64, buf)
+	base64.StdEncoding.Encode(b64, buf)
 
 	hreq, _ := http.NewRequestWithContext(c.traceCtx, http.MethodGet, c.opt.server+"?dns="+string(b64), nil)
 	hreq.Header.Add("Accept", dohMediaType)

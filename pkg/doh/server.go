@@ -37,6 +37,13 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	accept := r.Header.Get("Accept")
+	if accept != dohMediaType {
+		w.WriteHeader(http.StatusUnsupportedMediaType)
+		w.Write([]byte("unsupported media type: " + accept))
+		return
+	}
+
 	query := r.URL.Query().Get("dns")
 	if query == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -70,6 +77,6 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/dns-message")
+	w.Header().Set("Content-Type", dohMediaType)
 	w.Write(data)
 }
