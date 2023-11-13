@@ -47,5 +47,8 @@
                 "onion"
             ]
         }
+    ],
+    "blacklist": [
+        "^.*\\.?bing.com*"
     ]
 }

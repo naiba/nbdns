@@ -154,12 +154,24 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 }
 
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
-	if !up.IsPrimary {
+	var inBlacklist bool
+	domain := GetDomainNameFronDnsMsg(r)
+	if domain != "" {
+		for _, reg := range up.config.BlacklistRegexp {
+			if reg.MatchString(domain) {
+				inBlacklist = true
+				break
+			}
+		}
+	}
+
+	if !up.IsPrimary && !inBlacklist {
 		if debug {
-			log.Printf("checkPrimary skip %s: %s %v %v", up.Address, GetDomainNameFronDnsMsg(r), r.Answer, up.IsPrimary)
+			log.Printf("checkPrimary skip %s: %s %v", up.Address, GetDomainNameFronDnsMsg(r), r.Answer)
 		}
 		return true
 	}
+
 	for i := 0; i < len(r.Answer); i++ {
 		a, ok := r.Answer[i].(*dns.A)
 		if !ok {
@@ -168,13 +180,16 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		isPrimary, err := up.ipRanger.Contains(a.A)
 		if err != nil {
 			log.Printf("ipRanger query ip %s failed: %s", a.A, err)
-			return true
+			continue
 		}
 		if debug {
-			log.Printf("checkPrimary result %s: %s@%s -> %v %v", up.Address, GetDomainNameFronDnsMsg(r), a.A, isPrimary, up.IsPrimary)
+			log.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, GetDomainNameFronDnsMsg(r), a.A, inBlacklist, isPrimary, up.IsPrimary)
 		}
-		return isPrimary
+		if (inBlacklist && isPrimary) || (up.IsPrimary && !isPrimary) {
+			return false
+		}
 	}
+
 	return true
 }
 

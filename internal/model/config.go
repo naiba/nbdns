@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"regexp"
 
 	"github.com/pkg/errors"
 	"github.com/yl2chen/cidranger"
@@ -32,9 +33,12 @@ type Config struct {
 	BuiltInCache bool             `json:"built_in_cache,omitempty"`
 	Upstreams    []*Upstream      `json:"upstreams,omitempty"`
 	Bootstrap    []*Upstream      `json:"bootstrap,omitempty"`
+	Blacklist    []string         `json:"blacklist,omitempty"`
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`
+
+	BlacklistRegexp []*regexp.Regexp `json:"-"`
 }
 
 func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
@@ -56,6 +60,16 @@ func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
 		c.Upstreams[i].Init(c, ipRanger)
 		if err := c.Upstreams[i].Validate(); err != nil {
 			return err
+		}
+	}
+	for i := 0; i < len(c.Blacklist); i++ {
+		if c.Blacklist[i] == "" {
+			continue
+		}
+		if regexp, err := regexp.Compile(c.Blacklist[i]); err != nil {
+			return err
+		} else {
+			c.BlacklistRegexp = append(c.BlacklistRegexp, regexp)
 		}
 	}
 	return nil
