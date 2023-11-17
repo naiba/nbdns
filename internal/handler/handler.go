@@ -15,11 +15,10 @@ import (
 )
 
 type Handler struct {
-	strategy              int
-	upstreams             []*model.Upstream
-	preferDomainUpstreams map[string][]*model.Upstream
-	builtInCache          *cache.Cache
-	debug                 bool
+	strategy     int
+	upstreams    []*model.Upstream
+	builtInCache *cache.Cache
+	debug        bool
 }
 
 func NewHandler(strategy int, builtInCache bool,
@@ -29,30 +28,22 @@ func NewHandler(strategy int, builtInCache bool,
 	if builtInCache {
 		c = cache.New(time.Minute, time.Minute*10)
 	}
-	var preferDomainUpstreams = make(map[string][]*model.Upstream)
-	for _, u := range upstreams {
-		for _, d := range u.PreferDomain {
-			preferDomainUpstreams[d] = append(preferDomainUpstreams[d], u)
-		}
-	}
-	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c, preferDomainUpstreams: preferDomainUpstreams}
+	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c}
 }
 
-func (h *Handler) preferUpstreams(req *dns.Msg) []*model.Upstream {
+func (h *Handler) matchedUpstreams(req *dns.Msg) []*model.Upstream {
 	if len(req.Question) == 0 {
 		return h.upstreams
 	}
 	q := req.Question[0]
-	if q.Qtype != dns.TypeA && q.Qtype != dns.TypeAAAA {
-		return h.upstreams
+	var matchedUpstreams []*model.Upstream
+	for i := 0; i < len(h.upstreams); i++ {
+		if h.upstreams[i].IsMatch(q.Name) {
+			matchedUpstreams = append(matchedUpstreams, h.upstreams[i])
+		}
 	}
-	suffixs := strings.Split(q.Name, ".")
-	if len(suffixs) < 2 {
-		return h.upstreams
-	}
-	preferUpstreams := h.preferDomainUpstreams[suffixs[len(suffixs)-2]]
-	if len(preferUpstreams) > 0 {
-		return preferUpstreams
+	if len(matchedUpstreams) > 0 {
+		return matchedUpstreams
 	}
 	return h.upstreams
 }
@@ -156,7 +147,7 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	if h.debug {
-		log.Printf("HandleRequest req: %+v\n", req)
+		log.Printf("nbdns::request %+v\n", req)
 	}
 
 	var m string
@@ -188,7 +179,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	if h.debug {
-		log.Printf("HandleRequest resp: %+v\n", resp)
+		log.Printf("nbdns::resp: %+v\n", resp)
 	}
 
 	if h.builtInCache != nil {
@@ -213,20 +204,20 @@ func uniqueAnswer(intSlice []dns.RR) []dns.RR {
 }
 
 func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
-	preferUpstreams := h.preferUpstreams(req)
+	matchedUpstreams := h.matchedUpstreams(req)
 	var wg sync.WaitGroup
-	wg.Add(len(preferUpstreams))
-	msgs := make([]*dns.Msg, len(preferUpstreams))
+	wg.Add(len(matchedUpstreams))
+	msgs := make([]*dns.Msg, len(matchedUpstreams))
 
-	for i := 0; i < len(preferUpstreams); i++ {
+	for i := 0; i < len(matchedUpstreams); i++ {
 		go func(j int) {
 			defer wg.Done()
-			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
+			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
+				log.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
 				return
 			}
-			if preferUpstreams[j].IsValidMsg(h.debug, msg) {
+			if matchedUpstreams[j].IsValidMsg(h.debug, msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -237,7 +228,7 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 }
 
 func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
-	preferUpstreams := h.preferUpstreams(req)
+	preferUpstreams := h.matchedUpstreams(req)
 	msgs := make([]*dns.Msg, len(preferUpstreams))
 
 	var mutex sync.Mutex
@@ -305,20 +296,20 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 }
 
 func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
-	preferUpstreams := h.preferUpstreams(req)
+	matchedUpstreams := h.matchedUpstreams(req)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	msgs := make([]*dns.Msg, len(preferUpstreams))
+	msgs := make([]*dns.Msg, len(matchedUpstreams))
 	var mutex sync.Mutex
 	var finishedCount int
 	var finished bool
 
-	for i := 0; i < len(preferUpstreams); i++ {
+	for i := 0; i < len(matchedUpstreams); i++ {
 		go func(j int) {
-			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
+			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
+				log.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFronDnsMsg(req), err)
 			}
 			mutex.Lock()
 			defer mutex.Unlock()
@@ -329,7 +320,7 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 			}
 
 			// 已结束或任意上游返回成功时退出
-			if err == nil || finishedCount == len(preferUpstreams) {
+			if err == nil || finishedCount == len(matchedUpstreams) {
 				finished = true
 				msgs[j] = msg
 				wg.Done()

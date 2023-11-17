@@ -37,14 +37,14 @@
             "is_primary": true
         },
         {
-            "address": "tcp-tls://8.8.8.8:853",
+            "address": "tcp-tls://one.one.one.one:853",
             "use_socks": false
         },
         {
             "address": "https://dns.google/dns-query",
             "use_socks": false,
-            "prefer_domain": [
-                "onion"
+            "match": [
+                ".*\\.onion"
             ]
         }
     ],

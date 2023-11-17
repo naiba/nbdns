@@ -18,15 +18,17 @@
    timeout: 4 # 超时时间（秒）
    built_in_cache: false # 启用内建缓存
    bootstrap: "223.5.5.5" # 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
-   upstreams: 上游 DNS 列表（首推使用 tcp-tls）
+   upstreams: 上游 DNS 列表（首推使用 tcp-tls，启用 tls 的服务器必须使用主机名）
       is_primary: 将国内 DNS 的 is_primary 标记为 true
       use_socks: 可以为非 is_primary 启用 socks5
-      prefer_domain: # 优先的后缀列表，比如 Tor 的 onion，可以专门某个后缀定义上游
-         - onion
+      match: # 此上游仅解析匹配的域名列表，比如 Tor 的 onion，可以专门某个后缀定义上游
+         - ".*\\.onion"
    doh_server:
       host: 0.0.0.0:8053 # DoH 服务器端口
       username: user # 可选的 basic auth
       password: pass 
+   blacklist:
+      - "^.*\\.?bing.com*" # 强制 bing 通过非 primary 服务器解析
    ```
 
 3. 从 <https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt> 处下载 `china_ip_list.txt` 放置到 `data` 文件夹中

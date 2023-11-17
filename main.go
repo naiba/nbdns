@@ -35,7 +35,7 @@ func init() {
 		panic(err)
 	}
 
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, config.Debug)
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, config.Debug)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
