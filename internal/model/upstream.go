@@ -194,8 +194,6 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		}
 	}
 
-	var hasValidAnswer bool
-
 	for i := 0; i < len(r.Answer); i++ {
 		a, ok := r.Answer[i].(*dns.A)
 		if !ok {
@@ -209,7 +207,6 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		if debug {
 			log.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, GetDomainNameFronDnsMsg(r), a.A, inBlacklist, isPrimary, up.IsPrimary)
 		}
-
 		// 黑名单中的域名，如果是 primary 即不可用
 		if inBlacklist && isPrimary {
 			return false
@@ -218,11 +215,9 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		if up.IsPrimary && !isPrimary {
 			return false
 		}
-
-		hasValidAnswer = true
 	}
 
-	return hasValidAnswer
+	return true
 }
 
 func GetDomainNameFronDnsMsg(msg *dns.Msg) string {
