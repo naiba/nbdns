@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"go.uber.org/atomic"
 
 	"github.com/naiba/nbdns/pkg/doh"
+	"github.com/naiba/nbdns/pkg/utils"
 )
 
 type Upstream struct {
@@ -28,7 +28,7 @@ type Upstream struct {
 	protocol, hostAndPort, host, port string
 	config                            *Config
 	ipRanger                          cidranger.Ranger
-	matchRegexp                       []*regexp.Regexp
+	matchSplited                      [][]string
 
 	pool      net2.ConnectionPool
 	dohClient *doh.Client
@@ -51,24 +51,14 @@ func (up *Upstream) Init(config *Config, ipRanger cidranger.Ranger) {
 		panic("Upstream 已经初始化过了：" + up.Address)
 	}
 
-	if up.Match != nil {
-		for _, m := range up.Match {
-			up.matchRegexp = append(up.matchRegexp, regexp.MustCompile(m))
-		}
-	}
-
+	up.matchSplited = utils.ParseRules(up.Match)
 	up.count = atomic.NewInt64(0)
 	up.config = config
 	up.ipRanger = ipRanger
 }
 
 func (up *Upstream) IsMatch(domain string) bool {
-	for _, reg := range up.matchRegexp {
-		if reg.MatchString(domain) {
-			return true
-		}
-	}
-	return false
+	return utils.HasMatchedRule(up.matchSplited, domain)
 }
 
 func (up *Upstream) Validate() error {
@@ -183,17 +173,8 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 }
 
 func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
-	var inBlacklist bool
 	domain := GetDomainNameFronDnsMsg(r)
-	if domain != "" {
-		for _, reg := range up.config.BlacklistRegexp {
-			if reg.MatchString(domain) {
-				inBlacklist = true
-				break
-			}
-		}
-	}
-
+	inBlacklist := utils.HasMatchedRule(up.config.BlacklistSplited, domain)
 	for i := 0; i < len(r.Answer); i++ {
 		a, ok := r.Answer[i].(*dns.A)
 		if !ok {
@@ -205,7 +186,7 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 			continue
 		}
 		if debug {
-			log.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, GetDomainNameFronDnsMsg(r), a.A, inBlacklist, isPrimary, up.IsPrimary)
+			log.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, domain, a.A, inBlacklist, isPrimary, up.IsPrimary)
 		}
 		// 黑名单中的域名，如果是 primary 即不可用
 		if inBlacklist && isPrimary {
@@ -216,7 +197,6 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 			return false
 		}
 	}
-
 	return true
 }
 

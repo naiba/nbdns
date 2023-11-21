@@ -22,13 +22,14 @@
       is_primary: 将国内 DNS 的 is_primary 标记为 true
       use_socks: 可以为非 is_primary 启用 socks5
       match: # 此上游仅解析匹配的域名列表，比如 Tor 的 onion，可以专门某个后缀定义上游
-         - ".*\\.onion"
+         - ".onion."
    doh_server:
       host: 0.0.0.0:8053 # DoH 服务器端口
       username: user # 可选的 basic auth
       password: pass 
    blacklist:
-      - "^.*\\.?bing.com*" # 强制 bing 通过非 primary 服务器解析
+      - ".bing.com" # 强制 bing 通过非 primary 服务器解析
+      - ".bing.com."
    ```
 
 3. 从 <https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt> 处下载 `china_ip_list.txt` 放置到 `data` 文件夹中
@@ -54,6 +55,14 @@ dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
 Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
 ## FAQ
+
+### 匹配规则
+
+```python
+'.' => 匹配所有
+'a.com' => a.com
+'.a.com' => a.a.com c.a.com e.d.a.com
+```
 
 ### Docker
 

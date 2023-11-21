@@ -7,7 +7,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
-	"runtime/pprof"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -61,12 +60,9 @@ func main() {
 
 	if config.Profiling {
 		debugServerHandler := http.NewServeMux()
-		debugServerHandler.HandleFunc("/debug/goroutine", func(w http.ResponseWriter, r *http.Request) {
-			profile := pprof.Lookup("goroutine")
-			profile.WriteTo(w, 2)
-		})
+		debugServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
 		go http.ListenAndServe(":8854", debugServerHandler)
-		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/heap")
+		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
 	}
 
 	stopCh := make(chan error)

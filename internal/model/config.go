@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"regexp"
 
+	"github.com/naiba/nbdns/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/yl2chen/cidranger"
 	"golang.org/x/net/proxy"
@@ -38,7 +38,7 @@ type Config struct {
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`
 
-	BlacklistRegexp []*regexp.Regexp `json:"-"`
+	BlacklistSplited [][]string `json:"-"`
 }
 
 func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
@@ -62,16 +62,7 @@ func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
 			return err
 		}
 	}
-	for i := 0; i < len(c.Blacklist); i++ {
-		if c.Blacklist[i] == "" {
-			continue
-		}
-		if regexp, err := regexp.Compile(c.Blacklist[i]); err != nil {
-			return err
-		} else {
-			c.BlacklistRegexp = append(c.BlacklistRegexp, regexp)
-		}
-	}
+	c.BlacklistSplited = utils.ParseRules(c.Blacklist)
 	return nil
 }
 

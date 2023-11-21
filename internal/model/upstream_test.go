@@ -1,9 +1,11 @@
-package model_test
+package model
 
 import (
 	"index/suffixarray"
 	"strings"
 	"testing"
+
+	"github.com/naiba/nbdns/pkg/utils"
 )
 
 var primaryLocations = []string{"中国", "省", "市", "自治区"}
@@ -21,6 +23,70 @@ func BenchmarkCheckPrimary(b *testing.B) {
 func BenchmarkCheckPrimaryStringsContains(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		checkPrimaryStringsContains("哈哈")
+	}
+}
+
+func TestIsMatch(t *testing.T) {
+	var up Upstream
+	up.matchSplited = utils.ParseRules([]string{"."})
+	checkUpstreamMatch(&up, map[string]bool{
+		"":             false,
+		"a.com.":       true,
+		"b.a.com.":     true,
+		".b.a.com.cn.": true,
+		"b.a.com.cn.":  true,
+		"d.b.a.com.":   true,
+	}, t)
+
+	up.matchSplited = utils.ParseRules([]string{""})
+	checkUpstreamMatch(&up, map[string]bool{
+		"":             false,
+		"a.com.":       false,
+		"b.a.com.":     false,
+		".b.a.com.cn.": false,
+		"b.a.com.cn.":  false,
+		"d.b.a.com.":   false,
+	}, t)
+
+	up.matchSplited = utils.ParseRules([]string{"a.com."})
+	checkUpstreamMatch(&up, map[string]bool{
+		"":             false,
+		"a.com.":       true,
+		"b.a.com.":     false,
+		".b.a.com.cn.": false,
+		"b.a.com.cn.":  false,
+		"d.b.a.com.":   false,
+	}, t)
+
+	up.matchSplited = utils.ParseRules([]string{".a.com."})
+	checkUpstreamMatch(&up, map[string]bool{
+		"":             false,
+		"a.com.":       false,
+		"b.a.com.":     true,
+		".b.a.com.cn.": false,
+		"b.a.com.cn.":  false,
+		"d.b.a.com.":   true,
+	}, t)
+
+	up.matchSplited = utils.ParseRules([]string{"b.d.com."})
+	checkUpstreamMatch(&up, map[string]bool{
+		"":             false,
+		"a.com.":       false,
+		".a.com.":      false,
+		"b.d.com.":     true,
+		".b.d.com.cn.": false,
+		"b.d.com.cn.":  false,
+		".c.d.com.":    false,
+		"b.d.a.com.":   false,
+	}, t)
+}
+
+func checkUpstreamMatch(up *Upstream, cases map[string]bool, t *testing.T) {
+	for k, v := range cases {
+		isMatch := up.IsMatch(k)
+		if isMatch != v {
+			t.Errorf("Upstream(%s).IsMatch(%s) = %v, want %v", up.matchSplited, k, isMatch, v)
+		}
 	}
 }
 
