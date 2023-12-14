@@ -50,7 +50,7 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := base64.StdEncoding.DecodeString(query)
+	data, err := base64.RawURLEncoding.DecodeString(query)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(err.Error()))
