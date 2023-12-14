@@ -138,7 +138,7 @@ func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err erro
 	if err != nil {
 		return
 	}
-	base64.StdEncoding.Encode(b64, buf)
+	base64.RawURLEncoding.Encode(b64, buf)
 
 	hreq, _ := http.NewRequestWithContext(c.traceCtx, http.MethodGet, c.opt.server+"?dns="+string(b64), nil)
 	hreq.Header.Add("Accept", dohMediaType)
