@@ -15,10 +15,10 @@ import (
 )
 
 type Handler struct {
-	strategy     int
-	upstreams    []*model.Upstream
-	builtInCache *cache.Cache
-	debug        bool
+	strategy                          int
+	commonUpstreams, specialUpstreams []*model.Upstream
+	builtInCache                      *cache.Cache
+	debug                             bool
 }
 
 func NewHandler(strategy int, builtInCache bool,
@@ -28,24 +28,33 @@ func NewHandler(strategy int, builtInCache bool,
 	if builtInCache {
 		c = cache.New(time.Minute, time.Minute*10)
 	}
-	return &Handler{strategy: strategy, upstreams: upstreams, debug: debug, builtInCache: c}
+	var commonUpstreams, specialUpstreams []*model.Upstream
+	for i := 0; i < len(upstreams); i++ {
+		if len(upstreams[i].Match) > 0 {
+			specialUpstreams = append(specialUpstreams, upstreams[i])
+		} else {
+			commonUpstreams = append(commonUpstreams, upstreams[i])
+		}
+	}
+	return &Handler{strategy: strategy, commonUpstreams: commonUpstreams,
+		specialUpstreams: specialUpstreams, debug: debug, builtInCache: c}
 }
 
 func (h *Handler) matchedUpstreams(req *dns.Msg) []*model.Upstream {
 	if len(req.Question) == 0 {
-		return h.upstreams
+		return h.commonUpstreams
 	}
 	q := req.Question[0]
 	var matchedUpstreams []*model.Upstream
-	for i := 0; i < len(h.upstreams); i++ {
-		if h.upstreams[i].IsMatch(q.Name) {
-			matchedUpstreams = append(matchedUpstreams, h.upstreams[i])
+	for i := 0; i < len(h.specialUpstreams); i++ {
+		if h.specialUpstreams[i].IsMatch(q.Name) {
+			matchedUpstreams = append(matchedUpstreams, h.specialUpstreams[i])
 		}
 	}
 	if len(matchedUpstreams) > 0 {
 		return matchedUpstreams
 	}
-	return h.upstreams
+	return h.commonUpstreams
 }
 
 func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
