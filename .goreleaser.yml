@@ -39,7 +39,9 @@ archives:
   - name_template: "nbdns_{{ .Os }}_{{ .Arch }}"
     format: zip
     files:
-      - none*
+      - LICENSE
+      - README.md
+      - data
 dockers:
   - use: buildx
     goos: linux
