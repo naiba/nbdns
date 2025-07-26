@@ -76,31 +76,33 @@ docker run -name nbdns --restart always -d -v data路径:/nbdns/data -p 配置�
 
 ```shell
 #!/bin/sh /etc/rc.common
+USE_PROCD=1
+# After network starts
+START=21
+# Before network stops
+STOP=89
 
-START=99 # 执行的顺序，按照字符串顺序排序并不是数字排序
-STOP=15
-SERVICE=nbdns
-PROG=/root/nbdns
-USE_PROCD=1 # 使用procd启动
+cmd=/root/nbdns/nbdns
+name=nbdns
+pid_file="/var/run/${name}.pid"
 
-# start_service 函数必须要重新定义
-start_service()
-{
-    echo service nbdns start
-    procd_open_instance  # 创建一个实例， 在 procd 看来一个应用程序可以多个实例
-    # ubus call service list 可以查看实例
-    procd_set_param command $PROG # mycode执行的命令是"/app/mycode"， 若后面有参数可以直接在后面加上
-    procd_set_param respawn # 定义respawn参数，告知procd当mycode程序退出后尝试进行重启
-    # procd_close_instance # 关闭实例
-}
-stop_service() {
-    killall nbdns
-}
+start_service() {
+    echo "Starting ${name}"
+    procd_open_instance 
+    procd_set_param command ${cmd}
+    procd_set_param respawn 
 
-restart() {
- stop
- sleep 2
- start
+    # respawn automatically if something died, be careful if you have an alternative process supervisor
+    # if process exits sooner than respawn_threshold, it is considered crashed and after 5 retries the service is stopped
+    # if process finishes later than respawn_threshold, it is restarted unconditionally, regardless of error code
+    # notice that this is literal respawning of the process, no in a respawn-on-failure sense
+    procd_set_param respawn ${respawn_threshold:-3600} ${respawn_timeout:-5} ${respawn_retry:-5}
+
+    procd_set_param stdout 1             # forward stdout of the command to logd
+    procd_set_param stderr 1             # same for stderr
+    procd_set_param pidfile ${pid_file}  # write a pid file on instance start and remove it on stop
+    procd_close_instance
+    echo "${name} has been started"
 }
 ```
 
