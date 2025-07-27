@@ -1,15 +1,22 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/blang/semver"
 	"github.com/miekg/dns"
+	"github.com/rhysd/go-github-selfupdate/selfupdate"
 	"github.com/yl2chen/cidranger"
 
 	"github.com/naiba/nbdns/internal/handler"
@@ -18,7 +25,7 @@ import (
 )
 
 var (
-	version string = "dev"
+	version string
 
 	config   *model.Config
 	dataPath = detectDataPath()
@@ -34,7 +41,7 @@ func init() {
 		panic(err)
 	}
 
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, config.Debug)
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, config.Debug, dataPath)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -45,14 +52,26 @@ func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
-	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, config.Debug)
+	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, config.Debug, dataPath)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
+
+	// Setup graceful shutdown
+	defer func() {
+		if err := upstreamHandler.Close(); err != nil {
+			log.Printf("Error closing cache: %v", err)
+		}
+	}()
 
 	log.Println("==== DNS Server ====")
 	log.Println("端口:", config.ServeAddr)
 	log.Println("模式:", config.StrategyName())
 	log.Println("数据:", dataPath)
-	log.Println("启用内置缓存:", config.BuiltInCache)
+	if config.BuiltInCache {
+		log.Println("启用 BadgerDB 缓存: 最大 40MB")
+	} else {
+		log.Println("禁用缓存")
+	}
+
 	if config.DohServer != nil {
 		log.Println("启用 DoH 服务器:", config.DohServer.Host)
 	}
@@ -65,7 +84,19 @@ func main() {
 		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
 	}
 
+	// Start cache statistics logging if cache is enabled
+	if config.BuiltInCache {
+		go func() {
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				log.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
+			}
+		}()
+	}
+
 	stopCh := make(chan error)
+	go checkUpdate(stopCh)
 
 	go func() {
 		stopCh <- server.ListenAndServe()
@@ -73,12 +104,43 @@ func main() {
 	go func() {
 		stopCh <- serverTCP.ListenAndServe()
 	}()
+
 	if config.DohServer != nil {
-		dohServer := doh.NewServer(config.DohServer.Host, config.DohServer.Username, config.DohServer.Password, upstreamHandler.Exchange)
-		stopCh <- dohServer.Serve()
+		go func() {
+			dohServer := doh.NewServer(config.DohServer.Host, config.DohServer.Username, config.DohServer.Password, upstreamHandler.Exchange)
+			stopCh <- dohServer.Serve()
+		}()
 	}
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		log.Println("Shutting down...")
+		stopCh <- errors.New("shutdown signal received")
+	}()
+
 	log.Printf("server stopped: %+v", <-stopCh)
+}
+
+func checkUpdate(stopCh chan<- error) {
+	for {
+		go func() {
+			v := semver.MustParse(version)
+			latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
+			if err != nil {
+				log.Printf("Error checking for updates: %v", err)
+				return
+			}
+			if latest.Version.Equals(v) {
+				log.Printf("No update available, current version: %s", v)
+			} else {
+				log.Printf("Updated to version: %s", latest.Version)
+				stopCh <- errors.New("Server upgraded to " + latest.Version.String())
+			}
+		}()
+		time.Sleep(time.Duration(40+rand.Intn(20)) * time.Minute)
+	}
 }
 
 func loadIPRanger(path string) cidranger.Ranger {

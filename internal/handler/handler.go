@@ -11,22 +11,27 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
-	"github.com/patrickmn/go-cache"
+	"github.com/naiba/nbdns/pkg/cache"
 )
 
 type Handler struct {
 	strategy                          int
 	commonUpstreams, specialUpstreams []*model.Upstream
-	builtInCache                      *cache.Cache
+	builtInCache                      *cache.BadgerCache
 	debug                             bool
 }
 
 func NewHandler(strategy int, builtInCache bool,
 	upstreams []*model.Upstream,
-	debug bool) *Handler {
-	var c *cache.Cache
+	debug bool, dataPath string) *Handler {
+	var c *cache.BadgerCache
 	if builtInCache {
-		c = cache.New(time.Minute, time.Minute*10)
+		var err error
+		c, err = cache.NewBadgerCache(dataPath)
+		if err != nil {
+			log.Printf("Failed to initialize BadgerDB cache: %v", err)
+			c = nil
+		}
 	}
 	var commonUpstreams, specialUpstreams []*model.Upstream
 	for i := 0; i < len(upstreams); i++ {
@@ -122,11 +127,6 @@ func (h *Handler) Exchange(req *dns.Msg) *dns.Msg {
 	return res
 }
 
-type CachedMsg struct {
-	msg     *dns.Msg
-	expires time.Time
-}
-
 func getDnsRequestCacheKey(m *dns.Msg) string {
 	var edns string
 	o := m.IsEdns0()
@@ -143,12 +143,12 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {
 	var ttl uint32
-	if len(m.Answer) == 0 {
-		ttl = 60 // 最小 ttl 1 分钟
-	} else {
+	if len(m.Answer) > 0 {
 		ttl = m.Answer[0].Header().Ttl
 	}
-	if ttl > 3600 {
+	if ttl < 60 {
+		ttl = 60 // 最小 ttl 1 分钟
+	} else if ttl > 3600 {
 		ttl = 3600 // 最大 ttl 1 小时
 	}
 	return time.Duration(ttl) * time.Second
@@ -163,15 +163,14 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	if h.builtInCache != nil {
 		m = getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(m); ok {
-			v := v.(*CachedMsg)
-			resp := v.msg.Copy()
+			resp := v.Msg.Copy()
 			// 更新缓存的 answer 的 TTL
 			for i := 0; i < len(resp.Answer); i++ {
 				header := resp.Answer[i].Header()
 				if header == nil {
 					continue
 				}
-				header.Ttl = uint32(time.Until(v.expires).Seconds())
+				header.Ttl = uint32(time.Until(v.Expires).Seconds())
 			}
 			resp.SetReply(req)
 			if err := w.WriteMsg(resp); err != nil {
@@ -192,10 +191,14 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	if h.builtInCache != nil {
-		h.builtInCache.Set(m, &CachedMsg{
-			msg:     resp,
-			expires: time.Now().Add(getDnsResponseTtl(resp)),
-		}, getDnsResponseTtl(resp))
+		ttl := getDnsResponseTtl(resp)
+		cachedMsg := &cache.CachedMsg{
+			Msg:     resp,
+			Expires: time.Now().Add(ttl),
+		}
+		if err := h.builtInCache.Set(m, cachedMsg, ttl); err != nil {
+			log.Printf("Failed to cache response: %v", err)
+		}
 	}
 }
 
@@ -339,4 +342,20 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 
 	wg.Wait()
 	return msgs
+}
+
+// Close properly shuts down the cache
+func (h *Handler) Close() error {
+	if h.builtInCache != nil {
+		return h.builtInCache.Close()
+	}
+	return nil
+}
+
+// GetCacheStats returns cache statistics
+func (h *Handler) GetCacheStats() string {
+	if h.builtInCache != nil {
+		return h.builtInCache.Stats()
+	}
+	return "Cache disabled"
 }
