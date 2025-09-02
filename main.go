@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
+	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/naiba/nbdns/pkg/doh"
 )
 
@@ -28,11 +28,11 @@ var (
 	version string
 
 	config   *model.Config
-	dataPath = detectDataPath()
+	dataPath string
 )
 
-func init() {
-	log.SetOutput(os.Stdout)
+func main() {
+	dataPath = detectDataPath()
 
 	ipRanger := loadIPRanger(dataPath + "china_ip_list.txt")
 
@@ -41,47 +41,47 @@ func init() {
 		panic(err)
 	}
 
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, config.Debug, dataPath)
+	singleton.InitLogger(config.Debug)
+
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, dataPath)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
 	}
-}
 
-func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
-	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, config.Debug, dataPath)
+	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	// Setup graceful shutdown
 	defer func() {
 		if err := upstreamHandler.Close(); err != nil {
-			log.Printf("Error closing cache: %v", err)
+			singleton.Logger.Printf("Error closing cache: %v", err)
 		}
 	}()
 
-	log.Println("==== DNS Server ====")
-	log.Println("端口:", config.ServeAddr)
-	log.Println("模式:", config.StrategyName())
-	log.Println("数据:", dataPath)
+	singleton.Logger.Println("==== DNS Server ====")
+	singleton.Logger.Println("端口:", config.ServeAddr)
+	singleton.Logger.Println("模式:", config.StrategyName())
+	singleton.Logger.Println("数据:", dataPath)
 	if config.BuiltInCache {
-		log.Println("启用 BadgerDB 缓存: 最大 40MB")
+		singleton.Logger.Println("启用 BadgerDB 缓存: 最大 40MB")
 	} else {
-		log.Println("禁用缓存")
+		singleton.Logger.Println("禁用缓存")
 	}
 
 	if config.DohServer != nil {
-		log.Println("启用 DoH 服务器:", config.DohServer.Host)
+		singleton.Logger.Println("启用 DoH 服务器:", config.DohServer.Host)
 	}
-	log.Println("版本:", version)
+	singleton.Logger.Println("版本:", version)
 
 	if config.Profiling {
 		debugServerHandler := http.NewServeMux()
 		debugServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
 		go http.ListenAndServe(":8854", debugServerHandler)
-		log.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
+		singleton.Logger.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
 	}
 
 	// Start cache statistics logging if cache is enabled
@@ -90,7 +90,7 @@ func main() {
 			ticker := time.NewTicker(10 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				log.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
+				singleton.Logger.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
 			}
 		}()
 	}
@@ -116,11 +116,11 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		log.Println("Shutting down...")
+		singleton.Logger.Println("Shutting down...")
 		stopCh <- errors.New("shutdown signal received")
 	}()
 
-	log.Printf("server stopped: %+v", <-stopCh)
+	singleton.Logger.Printf("server stopped: %+v", <-stopCh)
 }
 
 func checkUpdate(stopCh chan<- error) {
@@ -129,13 +129,13 @@ func checkUpdate(stopCh chan<- error) {
 			v := semver.MustParse(version)
 			latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
 			if err != nil {
-				log.Printf("Error checking for updates: %v", err)
+				singleton.Logger.Printf("Error checking for updates: %v", err)
 				return
 			}
 			if latest.Version.Equals(v) {
-				log.Printf("No update available, current version: %s", v)
+				singleton.Logger.Printf("No update available, current version: %s", v)
 			} else {
-				log.Printf("Updated to version: %s", latest.Version)
+				singleton.Logger.Printf("Updated to version: %s", latest.Version)
 				stopCh <- errors.New("Server upgraded to " + latest.Version.String())
 			}
 		}()

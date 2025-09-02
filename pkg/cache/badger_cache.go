@@ -3,12 +3,12 @@ package cache
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"path/filepath"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/miekg/dns"
+	"github.com/naiba/nbdns/internal/singleton"
 )
 
 // CachedMsg represents a cached DNS message with expiration time
@@ -87,7 +87,7 @@ func (bc *BadgerCache) Get(key string) (*CachedMsg, bool) {
 		if err == badger.ErrKeyNotFound {
 			return nil, false
 		}
-		log.Printf("Cache get error: %v", err)
+		singleton.Logger.Printf("Cache get error: %v", err)
 		return nil, false
 	}
 
@@ -121,7 +121,7 @@ func (bc *BadgerCache) runGC() {
 	for range ticker.C {
 		err := bc.db.RunValueLogGC(0.5)
 		if err != nil && err != badger.ErrNoRewrite {
-			log.Printf("BadgerDB GC error: %v", err)
+			singleton.Logger.Printf("BadgerDB GC error: %v", err)
 		}
 	}
 }

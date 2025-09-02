@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/pkg/errors"
 	"golang.org/x/net/proxy"
 )
@@ -24,7 +24,6 @@ type clientOptions struct {
 	timeout   time.Duration
 	server    string
 	bootstrap func(domain string) (net.IP, error)
-	debug     bool
 	getDialer func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)
 }
 
@@ -33,13 +32,6 @@ type ClientOption func(*clientOptions) error
 func WithTimeout(t time.Duration) ClientOption {
 	return func(o *clientOptions) error {
 		o.timeout = t
-		return nil
-	}
-}
-
-func WithDebug(debug bool) ClientOption {
-	return func(o *clientOptions) error {
-		o.debug = debug
 		return nil
 	}
 }
@@ -79,9 +71,7 @@ func NewClient(opts ...ClientOption) *Client {
 
 	clientTrace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
-			if o.debug {
-				log.Printf("http conn was reused: %t", info.Reused)
-			}
+			singleton.Logger.Printf("http conn was reused: %t", info.Reused)
 		},
 	}
 

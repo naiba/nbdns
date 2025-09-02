@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
+	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/naiba/nbdns/pkg/cache"
 )
 
@@ -18,18 +18,17 @@ type Handler struct {
 	strategy                          int
 	commonUpstreams, specialUpstreams []*model.Upstream
 	builtInCache                      *cache.BadgerCache
-	debug                             bool
 }
 
 func NewHandler(strategy int, builtInCache bool,
 	upstreams []*model.Upstream,
-	debug bool, dataPath string) *Handler {
+	dataPath string) *Handler {
 	var c *cache.BadgerCache
 	if builtInCache {
 		var err error
 		c, err = cache.NewBadgerCache(dataPath)
 		if err != nil {
-			log.Printf("Failed to initialize BadgerDB cache: %v", err)
+			singleton.Logger.Printf("Failed to initialize BadgerDB cache: %v", err)
 			c = nil
 		}
 	}
@@ -42,7 +41,7 @@ func NewHandler(strategy int, builtInCache bool,
 		}
 	}
 	return &Handler{strategy: strategy, commonUpstreams: commonUpstreams,
-		specialUpstreams: specialUpstreams, debug: debug, builtInCache: c}
+		specialUpstreams: specialUpstreams, builtInCache: c}
 }
 
 func (h *Handler) matchedUpstreams(req *dns.Msg) []*model.Upstream {
@@ -85,9 +84,8 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	if ip == nil {
 		err = errors.New("no ipv4 address found")
 	}
-	if h.debug {
-		log.Printf("bootstrap LookupIP: %s %v --> %s %v", host, res.Answer, ip, err)
-	}
+
+	singleton.Logger.Printf("bootstrap LookupIP: %s %v --> %s %v", host, res.Answer, ip, err)
 	return
 }
 
@@ -155,9 +153,7 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 }
 
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
-	if h.debug {
-		log.Printf("nbdns::request %+v\n", req)
-	}
+	singleton.Logger.Printf("nbdns::request %+v\n", req)
 
 	var m string
 	if h.builtInCache != nil {
@@ -174,7 +170,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			}
 			resp.SetReply(req)
 			if err := w.WriteMsg(resp); err != nil {
-				log.Printf("WriteMsg from cache error: %+v", err)
+				singleton.Logger.Printf("WriteMsg from cache error: %+v", err)
 			}
 			return
 		}
@@ -183,12 +179,10 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	resp := h.Exchange(req)
 	resp.SetReply(req)
 	if err := w.WriteMsg(resp); err != nil {
-		log.Printf("WriteMsg from response error: %+v", err)
+		singleton.Logger.Printf("WriteMsg from response error: %+v", err)
 	}
 
-	if h.debug {
-		log.Printf("nbdns::resp: %+v\n", resp)
-	}
+	singleton.Logger.Printf("nbdns::resp: %+v\n", resp)
 
 	if h.builtInCache != nil {
 		ttl := getDnsResponseTtl(resp)
@@ -197,7 +191,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			Expires: time.Now().Add(ttl),
 		}
 		if err := h.builtInCache.Set(m, cachedMsg, ttl); err != nil {
-			log.Printf("Failed to cache response: %v", err)
+			singleton.Logger.Printf("Failed to cache response: %v", err)
 		}
 	}
 }
@@ -226,10 +220,10 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 			defer wg.Done()
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 				return
 			}
-			if matchedUpstreams[j].IsValidMsg(h.debug, msg) {
+			if matchedUpstreams[j].IsValidMsg(msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -255,7 +249,7 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 		go func(j int) {
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				singleton.Logger.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}
 
 			mutex.Lock()
@@ -268,7 +262,7 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 			}
 
 			if err == nil {
-				if preferUpstreams[j].IsValidMsg(h.debug, msg) {
+				if preferUpstreams[j].IsValidMsg(msg) {
 					if preferUpstreams[j].IsPrimary {
 						primaryIndex = append(primaryIndex, j)
 					} else {
@@ -321,7 +315,7 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 		go func(j int) {
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 			if err != nil {
-				log.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}
 			mutex.Lock()
 			defer mutex.Unlock()

@@ -3,7 +3,6 @@ package model
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net"
 	"runtime"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/yl2chen/cidranger"
 	"go.uber.org/atomic"
 
+	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/naiba/nbdns/pkg/doh"
 	"github.com/naiba/nbdns/pkg/utils"
 )
@@ -72,15 +72,13 @@ func (up *Upstream) Validate() error {
 		return errors.New("socks 未配置，但是上游已启用：" + up.Address)
 	}
 	if up.IsPrimary && up.protocol != "udp" {
-		log.Println("[WARN] Primary 建议使用 udp 加速获取结果：" + up.Address)
+		singleton.Logger.Println("[WARN] Primary 建议使用 udp 加速获取结果：" + up.Address)
 	}
 	return nil
 }
 
 func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
-	if up.config.Debug {
-		log.Printf("connecting to %s://%s", network, address)
-	}
+	singleton.Logger.Printf("connecting to %s://%s", network, address)
 
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -137,7 +135,6 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 	if strings.Contains(up.protocol, "http") {
 		ops := []doh.ClientOption{
 			doh.WithServer(up.Address),
-			doh.WithDebug(up.config.Debug),
 			doh.WithBootstrap(bootstrap),
 			doh.WithTimeout(time.Second * time.Duration(up.config.Timeout)),
 		}
@@ -172,7 +169,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 	}
 }
 
-func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
+func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
 	domain := GetDomainNameFromDnsMsg(r)
 	inBlacklist := utils.HasMatchedRule(up.config.BlacklistSplited, domain)
 	for i := 0; i < len(r.Answer); i++ {
@@ -189,12 +186,12 @@ func (up *Upstream) IsValidMsg(debug bool, r *dns.Msg) bool {
 		}
 		isPrimary, err := up.ipRanger.Contains(ip)
 		if err != nil {
-			log.Printf("ipRanger query ip %s failed: %s", ip, err)
+			singleton.Logger.Printf("ipRanger query ip %s failed: %s", ip, err)
 			continue
 		}
-		if debug {
-			log.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, domain, ip, inBlacklist, isPrimary, up.IsPrimary)
-		}
+
+		singleton.Logger.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, domain, ip, inBlacklist, isPrimary, up.IsPrimary)
+
 		// 黑名单中的域名，如果是 primary 即不可用
 		if inBlacklist && isPrimary {
 			return false
@@ -222,10 +219,8 @@ func (up *Upstream) poolLen() int32 {
 }
 
 func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	if up.config.Debug {
-		log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
-		defer log.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
-	}
+	singleton.Logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
+	defer singleton.Logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
 
 	var resp *dns.Msg
 	var duration time.Duration
