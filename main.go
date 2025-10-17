@@ -21,6 +21,8 @@ import (
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/singleton"
+	"github.com/naiba/nbdns/internal/stats"
+	"github.com/naiba/nbdns/internal/web"
 	"github.com/naiba/nbdns/pkg/doh"
 )
 
@@ -42,6 +44,9 @@ func main() {
 	}
 
 	singleton.InitLogger(config.Debug)
+
+	// 初始化统计系统
+	stats.Init()
 
 	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, dataPath)
 
@@ -77,12 +82,21 @@ func main() {
 	}
 	singleton.Logger.Println("版本:", version)
 
+	// 启动 Web 服务（监控面板 + pprof）
+	webServerHandler := http.NewServeMux()
+
+	// 注册监控面板路由
+	webHandler := web.NewHandler(stats.GlobalStats)
+	webHandler.RegisterRoutes(webServerHandler)
+
+	// 如果启用 profiling，注册 pprof 路由
 	if config.Profiling {
-		debugServerHandler := http.NewServeMux()
-		debugServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
-		go http.ListenAndServe(":8854", debugServerHandler)
+		webServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
 		singleton.Logger.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
 	}
+
+	go http.ListenAndServe(":8854", webServerHandler)
+	singleton.Logger.Println("监控面板: http://0.0.0.0:8854/")
 
 	// Start cache statistics logging if cache is enabled
 	if config.BuiltInCache {
@@ -126,7 +140,12 @@ func main() {
 func checkUpdate(stopCh chan<- error) {
 	for {
 		go func() {
-			v := semver.MustParse(version)
+			// 如果 version 为空，使用默认值
+			ver := version
+			if ver == "" {
+				ver = "0.0.0"
+			}
+			v := semver.MustParse(ver)
 			latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
 			if err != nil {
 				singleton.Logger.Printf("Error checking for updates: %v", err)

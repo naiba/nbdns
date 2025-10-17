@@ -11,6 +11,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/singleton"
+	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/cache"
 )
 
@@ -155,10 +156,20 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	singleton.Logger.Printf("nbdns::request %+v\n", req)
 
+	// 记录查询统计
+	if stats.GlobalStats != nil {
+		stats.GlobalStats.RecordQuery()
+	}
+
 	var m string
 	if h.builtInCache != nil {
 		m = getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(m); ok {
+			// 记录缓存命中
+			if stats.GlobalStats != nil {
+				stats.GlobalStats.RecordCacheHit()
+			}
+
 			resp := v.Msg.Copy()
 			// 更新缓存的 answer 的 TTL
 			for i := 0; i < len(resp.Answer); i++ {
@@ -174,9 +185,19 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			}
 			return
 		}
+		// 记录缓存未命中
+		if stats.GlobalStats != nil {
+			stats.GlobalStats.RecordCacheMiss()
+		}
 	}
 
 	resp := h.Exchange(req)
+
+	// 记录失败查询
+	if resp.Rcode == dns.RcodeServerFailure && stats.GlobalStats != nil {
+		stats.GlobalStats.RecordFailed()
+	}
+
 	resp.SetReply(req)
 	if err := w.WriteMsg(resp); err != nil {
 		singleton.Logger.Printf("WriteMsg from response error: %+v", err)
@@ -219,6 +240,12 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 		go func(j int) {
 			defer wg.Done()
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
+
+			// 记录上游服务器统计
+			if stats.GlobalStats != nil {
+				stats.GlobalStats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
+			}
+
 			if err != nil {
 				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 				return
@@ -248,6 +275,12 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 	for i := 0; i < len(preferUpstreams); i++ {
 		go func(j int) {
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
+
+			// 记录上游服务器统计
+			if stats.GlobalStats != nil {
+				stats.GlobalStats.RecordUpstreamQuery(preferUpstreams[j].Address, err != nil)
+			}
+
 			if err != nil {
 				singleton.Logger.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}
@@ -314,6 +347,12 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 	for i := 0; i < len(matchedUpstreams); i++ {
 		go func(j int) {
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
+
+			// 记录上游服务器统计
+			if stats.GlobalStats != nil {
+				stats.GlobalStats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
+			}
+
 			if err != nil {
 				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}

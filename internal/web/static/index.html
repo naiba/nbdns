@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NBDNS 监控面板</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>NBDNS 监控面板</h1>
+            <div class="update-info">
+                <span id="last-update">正在加载...</span>
+                <button id="refresh-btn" onclick="loadStats()">刷新</button>
+            </div>
+        </header>
+
+        <div class="dashboard">
+            <!-- 运行时信息 -->
+            <section class="card">
+                <h2>运行时信息</h2>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">运行时长</span>
+                        <span class="stat-value" id="uptime">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Goroutines</span>
+                        <span class="stat-value" id="goroutines">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">已分配内存</span>
+                        <span class="stat-value" id="mem-alloc">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">系统内存</span>
+                        <span class="stat-value" id="mem-sys">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">总分配内存</span>
+                        <span class="stat-value" id="mem-total">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">GC 次数</span>
+                        <span class="stat-value" id="num-gc">-</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DNS 查询统计 -->
+            <section class="card">
+                <h2>DNS 查询统计</h2>
+                <div class="stats-grid">
+                    <div class="stat-item highlight">
+                        <span class="stat-label">总查询数</span>
+                        <span class="stat-value" id="total-queries">-</span>
+                    </div>
+                    <div class="stat-item success">
+                        <span class="stat-label">缓存命中</span>
+                        <span class="stat-value" id="cache-hits">-</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">缓存未命中</span>
+                        <span class="stat-value" id="cache-misses">-</span>
+                    </div>
+                    <div class="stat-item warning">
+                        <span class="stat-label">失败查询</span>
+                        <span class="stat-value" id="failed-queries">-</span>
+                    </div>
+                    <div class="stat-item highlight">
+                        <span class="stat-label">缓存命中率</span>
+                        <span class="stat-value" id="hit-rate">-</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 上游服务器统计 -->
+            <section class="card full-width">
+                <h2>上游服务器统计</h2>
+                <div class="table-container">
+                    <table id="upstream-table">
+                        <thead>
+                            <tr>
+                                <th>服务器地址</th>
+                                <th>总查询数</th>
+                                <th>错误数</th>
+                                <th>错误率</th>
+                                <th>最后使用</th>
+                            </tr>
+                        </thead>
+                        <tbody id="upstream-tbody">
+                            <tr>
+                                <td colspan="5" class="no-data">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+
+        <footer>
+            <p>NBDNS - 智能 DNS 服务器</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
