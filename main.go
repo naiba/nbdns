@@ -48,7 +48,8 @@ func main() {
 	// 初始化统计系统
 	stats.Init()
 
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, true, config.Bootstrap, dataPath)
+	// Bootstrap handler 不需要缓存，只是用于初始化连接
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -57,6 +58,7 @@ func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
+	// 只有 upstream handler 需要缓存
 	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 

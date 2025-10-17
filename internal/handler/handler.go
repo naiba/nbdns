@@ -30,7 +30,10 @@ func NewHandler(strategy int, builtInCache bool,
 		c, err = cache.NewBadgerCache(dataPath)
 		if err != nil {
 			singleton.Logger.Printf("Failed to initialize BadgerDB cache: %v", err)
+			singleton.Logger.Printf("Cache will be disabled")
 			c = nil
+		} else {
+			singleton.Logger.Printf("BadgerDB cache initialized successfully at %s", dataPath)
 		}
 	}
 	var commonUpstreams, specialUpstreams []*model.Upstream
