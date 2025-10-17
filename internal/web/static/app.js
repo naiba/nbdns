@@ -1,6 +1,8 @@
 // 自动刷新间隔（毫秒）
 const REFRESH_INTERVAL = 3000;
 let refreshTimer = null;
+let countdownTimer = null;
+let countdown = 0;
 
 // 格式化数字，添加千位分隔符
 function formatNumber(num) {
@@ -56,6 +58,25 @@ function updateUpstreamTable(upstreams) {
     tbody.innerHTML = html;
 }
 
+// 更新倒计时显示
+function updateCountdown() {
+    countdown--;
+    if (countdown <= 0) {
+        countdown = 0;
+    }
+    document.getElementById('last-update').textContent = `下次刷新: ${countdown}秒`;
+}
+
+// 重置倒计时
+function resetCountdown() {
+    countdown = REFRESH_INTERVAL / 1000;
+    if (countdownTimer) {
+        clearInterval(countdownTimer);
+    }
+    countdownTimer = setInterval(updateCountdown, 1000);
+    updateCountdown();
+}
+
 // 加载统计数据
 async function loadStats() {
     try {
@@ -71,10 +92,8 @@ async function loadStats() {
         updateQueryStats(data.queries);
         updateUpstreamTable(data.upstreams);
 
-        // 更新最后刷新时间
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('zh-CN');
-        document.getElementById('last-update').textContent = '最后更新: ' + timeStr;
+        // 重置倒计时
+        resetCountdown();
 
     } catch (error) {
         console.error('加载统计数据出错:', error);
@@ -95,6 +114,10 @@ function stopAutoRefresh() {
     if (refreshTimer) {
         clearInterval(refreshTimer);
         refreshTimer = null;
+    }
+    if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
     }
 }
 
