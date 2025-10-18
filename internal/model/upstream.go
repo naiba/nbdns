@@ -59,6 +59,11 @@ func (up *Upstream) Init(config *Config, ipRanger cidranger.Ranger, log logger.L
 	up.logger = log
 }
 
+// SetLogger 更新 upstream 的 logger 实例
+func (up *Upstream) SetLogger(log logger.Logger) {
+	up.logger = log
+}
+
 func (up *Upstream) IsMatch(domain string) bool {
 	return utils.HasMatchedRule(up.matchSplited, domain)
 }

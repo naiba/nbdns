@@ -55,13 +55,12 @@ func main() {
 	log := logger.New(config.Debug)
 	statsRecorder := stats.NewStats()
 
-	// 重新初始化 upstreams 以使用正确的 logger
+	// 更新 upstreams 的 logger 为正式的 logger
 	for i := 0; i < len(config.Bootstrap); i++ {
-		config.Bootstrap[i].Init(config, ipRanger, log)
-		config.Bootstrap[i].InitConnectionPool(nil)
+		config.Bootstrap[i].SetLogger(log)
 	}
 	for i := 0; i < len(config.Upstreams); i++ {
-		config.Upstreams[i].Init(config, ipRanger, log)
+		config.Upstreams[i].SetLogger(log)
 	}
 
 	// Bootstrap handler 不需要缓存，只是用于初始化连接
