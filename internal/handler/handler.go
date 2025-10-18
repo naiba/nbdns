@@ -9,31 +9,35 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/naiba/nbdns/internal/cache"
 	"github.com/naiba/nbdns/internal/model"
-	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/naiba/nbdns/internal/stats"
-	"github.com/naiba/nbdns/pkg/cache"
+	"github.com/naiba/nbdns/pkg/logger"
 )
 
 type Handler struct {
 	strategy                          int
 	commonUpstreams, specialUpstreams []*model.Upstream
-	builtInCache                      *cache.BadgerCache
+	builtInCache                      cache.Cache
+	logger                            logger.Logger
+	stats                             stats.StatsRecorder
 }
 
 func NewHandler(strategy int, builtInCache bool,
 	upstreams []*model.Upstream,
-	dataPath string) *Handler {
-	var c *cache.BadgerCache
+	dataPath string,
+	log logger.Logger,
+	statsRecorder stats.StatsRecorder) *Handler {
+	var c cache.Cache
 	if builtInCache {
 		var err error
-		c, err = cache.NewBadgerCache(dataPath)
+		c, err = cache.NewBadgerCache(dataPath, log)
 		if err != nil {
-			singleton.Logger.Printf("Failed to initialize BadgerDB cache: %v", err)
-			singleton.Logger.Printf("Cache will be disabled")
+			log.Printf("Failed to initialize BadgerDB cache: %v", err)
+			log.Printf("Cache will be disabled")
 			c = nil
 		} else {
-			singleton.Logger.Printf("BadgerDB cache initialized successfully at %s", dataPath)
+			log.Printf("BadgerDB cache initialized successfully at %s", dataPath)
 		}
 	}
 	var commonUpstreams, specialUpstreams []*model.Upstream
@@ -44,8 +48,14 @@ func NewHandler(strategy int, builtInCache bool,
 			commonUpstreams = append(commonUpstreams, upstreams[i])
 		}
 	}
-	return &Handler{strategy: strategy, commonUpstreams: commonUpstreams,
-		specialUpstreams: specialUpstreams, builtInCache: c}
+	return &Handler{
+		strategy:         strategy,
+		commonUpstreams:  commonUpstreams,
+		specialUpstreams: specialUpstreams,
+		builtInCache:     c,
+		logger:           log,
+		stats:            statsRecorder,
+	}
 }
 
 func (h *Handler) matchedUpstreams(req *dns.Msg) []*model.Upstream {
@@ -89,7 +99,7 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 		err = errors.New("no ipv4 address found")
 	}
 
-	singleton.Logger.Printf("bootstrap LookupIP: %s %v --> %s %v", host, res.Answer, ip, err)
+	h.logger.Printf("bootstrap LookupIP: %s %v --> %s %v", host, res.Answer, ip, err)
 	return
 }
 
@@ -157,11 +167,11 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 }
 
 func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
-	singleton.Logger.Printf("nbdns::request %+v\n", req)
+	h.logger.Printf("nbdns::request %+v\n", req)
 
 	// 记录查询统计
-	if stats.GlobalStats != nil {
-		stats.GlobalStats.RecordQuery()
+	if h.stats != nil {
+		h.stats.RecordQuery()
 	}
 
 	var m string
@@ -169,8 +179,8 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 		m = getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(m); ok {
 			// 记录缓存命中
-			if stats.GlobalStats != nil {
-				stats.GlobalStats.RecordCacheHit()
+			if h.stats != nil {
+				h.stats.RecordCacheHit()
 			}
 
 			resp := v.Msg.Copy()
@@ -184,29 +194,29 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			}
 			resp.SetReply(req)
 			if err := w.WriteMsg(resp); err != nil {
-				singleton.Logger.Printf("WriteMsg from cache error: %+v", err)
+				h.logger.Printf("WriteMsg from cache error: %+v", err)
 			}
 			return
 		}
 		// 记录缓存未命中
-		if stats.GlobalStats != nil {
-			stats.GlobalStats.RecordCacheMiss()
+		if h.stats != nil {
+			h.stats.RecordCacheMiss()
 		}
 	}
 
 	resp := h.Exchange(req)
 
 	// 记录失败查询
-	if resp.Rcode == dns.RcodeServerFailure && stats.GlobalStats != nil {
-		stats.GlobalStats.RecordFailed()
+	if resp.Rcode == dns.RcodeServerFailure && h.stats != nil {
+		h.stats.RecordFailed()
 	}
 
 	resp.SetReply(req)
 	if err := w.WriteMsg(resp); err != nil {
-		singleton.Logger.Printf("WriteMsg from response error: %+v", err)
+		h.logger.Printf("WriteMsg from response error: %+v", err)
 	}
 
-	singleton.Logger.Printf("nbdns::resp: %+v\n", resp)
+	h.logger.Printf("nbdns::resp: %+v\n", resp)
 
 	if h.builtInCache != nil {
 		ttl := getDnsResponseTtl(resp)
@@ -215,7 +225,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			Expires: time.Now().Add(ttl),
 		}
 		if err := h.builtInCache.Set(m, cachedMsg, ttl); err != nil {
-			singleton.Logger.Printf("Failed to cache response: %v", err)
+			h.logger.Printf("Failed to cache response: %v", err)
 		}
 	}
 }
@@ -245,12 +255,12 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 
 			// 记录上游服务器统计
-			if stats.GlobalStats != nil {
-				stats.GlobalStats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
+			if h.stats != nil {
+				h.stats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
 			}
 
 			if err != nil {
-				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				h.logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 				return
 			}
 			if matchedUpstreams[j].IsValidMsg(msg) {
@@ -280,12 +290,12 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
 
 			// 记录上游服务器统计
-			if stats.GlobalStats != nil {
-				stats.GlobalStats.RecordUpstreamQuery(preferUpstreams[j].Address, err != nil)
+			if h.stats != nil {
+				h.stats.RecordUpstreamQuery(preferUpstreams[j].Address, err != nil)
 			}
 
 			if err != nil {
-				singleton.Logger.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				h.logger.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}
 
 			mutex.Lock()
@@ -352,12 +362,12 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
 
 			// 记录上游服务器统计
-			if stats.GlobalStats != nil {
-				stats.GlobalStats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
+			if h.stats != nil {
+				h.stats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
 			}
 
 			if err != nil {
-				singleton.Logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
+				h.logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 			}
 			mutex.Lock()
 			defer mutex.Unlock()

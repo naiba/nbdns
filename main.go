@@ -20,10 +20,10 @@ import (
 
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
-	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/internal/web"
 	"github.com/naiba/nbdns/pkg/doh"
+	"github.com/naiba/nbdns/pkg/logger"
 )
 
 var (
@@ -38,8 +38,11 @@ func main() {
 
 	ipRanger := loadIPRanger(dataPath + "china_ip_list.txt")
 
+	// 先创建一个临时 logger 用于读取配置
+	tempLogger := logger.New(false)
+
 	config = &model.Config{}
-	if err := config.ReadInConfig(dataPath+"/config.json", ipRanger); err != nil {
+	if err := config.ReadInConfig(dataPath+"/config.json", ipRanger, tempLogger); err != nil {
 		panic(err)
 	}
 
@@ -48,13 +51,21 @@ func main() {
 		config.WebAddr = "0.0.0.0:8854"
 	}
 
-	singleton.InitLogger(config.Debug)
+	// 根据配置创建正式的 logger 和 stats 实例
+	log := logger.New(config.Debug)
+	statsRecorder := stats.NewStats()
 
-	// 初始化统计系统
-	stats.Init()
+	// 重新初始化 upstreams 以使用正确的 logger
+	for i := 0; i < len(config.Bootstrap); i++ {
+		config.Bootstrap[i].Init(config, ipRanger, log)
+		config.Bootstrap[i].InitConnectionPool(nil)
+	}
+	for i := 0; i < len(config.Upstreams); i++ {
+		config.Upstreams[i].Init(config, ipRanger, log)
+	}
 
 	// Bootstrap handler 不需要缓存，只是用于初始化连接
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath)
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath, log, nil)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -64,30 +75,30 @@ func main() {
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
 	// 只有 upstream handler 需要缓存
-	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath)
+	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath, log, statsRecorder)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	// Setup graceful shutdown
 	defer func() {
 		if err := upstreamHandler.Close(); err != nil {
-			singleton.Logger.Printf("Error closing cache: %v", err)
+			log.Printf("Error closing cache: %v", err)
 		}
 	}()
 
-	singleton.Logger.Println("==== DNS Server ====")
-	singleton.Logger.Println("端口:", config.ServeAddr)
-	singleton.Logger.Println("模式:", config.StrategyName())
-	singleton.Logger.Println("数据:", dataPath)
+	log.Println("==== DNS Server ====")
+	log.Println("端口:", config.ServeAddr)
+	log.Println("模式:", config.StrategyName())
+	log.Println("数据:", dataPath)
 	if config.BuiltInCache {
-		singleton.Logger.Println("启用 BadgerDB 缓存: 最大 40MB")
+		log.Println("启用 BadgerDB 缓存: 最大 40MB")
 	} else {
-		singleton.Logger.Println("禁用缓存")
+		log.Println("禁用缓存")
 	}
 
 	if config.DohServer != nil {
-		singleton.Logger.Println("启用 DoH 服务器:", config.DohServer.Host)
+		log.Println("启用 DoH 服务器:", config.DohServer.Host)
 	}
-	singleton.Logger.Println("版本:", version)
+	log.Println("版本:", version)
 
 	// 创建更新检查通道
 	checkUpdateCh := make(chan struct{}, 1)
@@ -96,17 +107,17 @@ func main() {
 	webServerHandler := http.NewServeMux()
 
 	// 注册监控面板路由
-	webHandler := web.NewHandler(stats.GlobalStats, version, checkUpdateCh)
+	webHandler := web.NewHandler(statsRecorder, version, checkUpdateCh, log)
 	webHandler.RegisterRoutes(webServerHandler)
 
 	// 如果启用 profiling，注册 pprof 路由
 	if config.Profiling {
 		webServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
-		singleton.Logger.Printf("性能分析: http://%s/debug/pprof/", config.WebAddr)
+		log.Printf("性能分析: http://%s/debug/pprof/", config.WebAddr)
 	}
 
 	go http.ListenAndServe(config.WebAddr, webServerHandler)
-	singleton.Logger.Printf("监控面板: http://%s/", config.WebAddr)
+	log.Printf("监控面板: http://%s/", config.WebAddr)
 
 	// Start cache statistics logging if cache is enabled
 	if config.BuiltInCache {
@@ -114,7 +125,7 @@ func main() {
 			ticker := time.NewTicker(10 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
-				singleton.Logger.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
+				log.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
 			}
 		}()
 	}
@@ -122,7 +133,7 @@ func main() {
 	stopCh := make(chan error)
 
 	// 启动后台更新检查
-	go checkUpdate(checkUpdateCh, stopCh)
+	go checkUpdate(checkUpdateCh, stopCh, log)
 
 	// 定时触发更新检查（生产者1：定时器）
 	go func() {
@@ -162,15 +173,15 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		singleton.Logger.Println("Shutting down...")
+		log.Println("Shutting down...")
 		stopCh <- errors.New("shutdown signal received")
 	}()
 
-	singleton.Logger.Printf("server stopped: %+v", <-stopCh)
+	log.Printf("server stopped: %+v", <-stopCh)
 }
 
 // checkUpdate 监听 channel 触发更新检查
-func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error) {
+func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error, log logger.Logger) {
 	for range checkCh {
 		// 如果 version 为空，使用默认值
 		ver := version
@@ -180,13 +191,13 @@ func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error) {
 		v := semver.MustParse(ver)
 		latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
 		if err != nil {
-			singleton.Logger.Printf("Error checking for updates: %v", err)
+			log.Printf("Error checking for updates: %v", err)
 			continue
 		}
 		if latest.Version.Equals(v) {
-			singleton.Logger.Printf("No update available, current version: %s", v)
+			log.Printf("No update available, current version: %s", v)
 		} else {
-			singleton.Logger.Printf("Updated to version: %s", latest.Version)
+			log.Printf("Updated to version: %s", latest.Version)
 			stopCh <- errors.New("Server upgraded to " + latest.Version.String())
 			return
 		}

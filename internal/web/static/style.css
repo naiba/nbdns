@@ -44,21 +44,6 @@ h1 {
     font-size: 0.9em;
 }
 
-#refresh-btn {
-    background: #667eea;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 0.9em;
-    transition: background 0.3s;
-}
-
-#refresh-btn:hover {
-    background: #5568d3;
-}
-
 .dashboard {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/naiba/nbdns/internal/singleton"
 	"github.com/pkg/errors"
 	"golang.org/x/net/proxy"
 )
@@ -20,11 +19,17 @@ const (
 	dohMediaType = "application/dns-message"
 )
 
+// Logger 定义可选的日志接口
+type Logger interface {
+	Printf(format string, v ...interface{})
+}
+
 type clientOptions struct {
 	timeout   time.Duration
 	server    string
 	bootstrap func(domain string) (net.IP, error)
 	getDialer func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)
+	logger    Logger
 }
 
 type ClientOption func(*clientOptions) error
@@ -57,6 +62,13 @@ func WithBootstrap(resolver func(domain string) (net.IP, error)) ClientOption {
 	}
 }
 
+func WithLogger(logger Logger) ClientOption {
+	return func(o *clientOptions) error {
+		o.logger = logger
+		return nil
+	}
+}
+
 type Client struct {
 	opt      *clientOptions
 	cli      *http.Client
@@ -71,7 +83,9 @@ func NewClient(opts ...ClientOption) *Client {
 
 	clientTrace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
-			singleton.Logger.Printf("http conn was reused: %t", info.Reused)
+			if o.logger != nil {
+				o.logger.Printf("http conn was reused: %t", info.Reused)
+			}
 		},
 	}
 

@@ -7,8 +7,15 @@ import (
 	"time"
 )
 
-// GlobalStats 全局统计实例
-var GlobalStats *Stats
+// StatsRecorder 定义统计接口
+type StatsRecorder interface {
+	RecordQuery()
+	RecordCacheHit()
+	RecordCacheMiss()
+	RecordFailed()
+	RecordUpstreamQuery(address string, isError bool)
+	GetSnapshot() StatsSnapshot
+}
 
 // Stats DNS服务器统计信息
 type Stats struct {
@@ -40,11 +47,6 @@ func NewStats() *Stats {
 		StartTime:     time.Now(),
 		upstreamStats: make(map[string]*UpstreamStats),
 	}
-}
-
-// Init 初始化全局统计
-func Init() {
-	GlobalStats = NewStats()
 }
 
 // RecordQuery 记录DNS查询

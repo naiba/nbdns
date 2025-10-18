@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 
+	"github.com/naiba/nbdns/pkg/logger"
 	"github.com/naiba/nbdns/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/yl2chen/cidranger"
@@ -42,7 +43,7 @@ type Config struct {
 	BlacklistSplited [][]string `json:"-"`
 }
 
-func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
+func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger, log logger.Logger) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -51,14 +52,14 @@ func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger) error {
 		return err
 	}
 	for i := 0; i < len(c.Bootstrap); i++ {
-		c.Bootstrap[i].Init(c, ipRanger)
+		c.Bootstrap[i].Init(c, ipRanger, log)
 		if net.ParseIP(c.Bootstrap[i].host) == nil {
 			return errors.New("Bootstrap 服务器只能使用 IP: " + c.Bootstrap[i].Address)
 		}
 		c.Bootstrap[i].InitConnectionPool(nil)
 	}
 	for i := 0; i < len(c.Upstreams); i++ {
-		c.Upstreams[i].Init(c, ipRanger)
+		c.Upstreams[i].Init(c, ipRanger, log)
 		if err := c.Upstreams[i].Validate(); err != nil {
 			return err
 		}

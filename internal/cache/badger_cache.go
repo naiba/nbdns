@@ -8,8 +8,17 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/miekg/dns"
-	"github.com/naiba/nbdns/internal/singleton"
+	"github.com/naiba/nbdns/pkg/logger"
 )
+
+// Cache 定义缓存接口
+type Cache interface {
+	Get(key string) (*CachedMsg, bool)
+	Set(key string, msg *CachedMsg, ttl time.Duration) error
+	Delete(key string) error
+	Close() error
+	Stats() string
+}
 
 // CachedMsg represents a cached DNS message with expiration time
 type CachedMsg struct {
@@ -19,11 +28,12 @@ type CachedMsg struct {
 
 // BadgerCache wraps BadgerDB for DNS query caching
 type BadgerCache struct {
-	db *badger.DB
+	db     *badger.DB
+	logger logger.Logger
 }
 
 // NewBadgerCache creates a new BadgerDB cache instance with a 40MB size limit
-func NewBadgerCache(dataPath string) (*BadgerCache, error) {
+func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 	dbPath := filepath.Join(dataPath, "cache")
 
 	opts := badger.DefaultOptions(dbPath)
@@ -46,7 +56,7 @@ func NewBadgerCache(dataPath string) (*BadgerCache, error) {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	cache := &BadgerCache{db: db}
+	cache := &BadgerCache{db: db, logger: log}
 
 	// Start garbage collection routine
 	go cache.runGC()
@@ -87,7 +97,7 @@ func (bc *BadgerCache) Get(key string) (*CachedMsg, bool) {
 		if err == badger.ErrKeyNotFound {
 			return nil, false
 		}
-		singleton.Logger.Printf("Cache get error: %v", err)
+		bc.logger.Printf("Cache get error: %v", err)
 		return nil, false
 	}
 
@@ -121,7 +131,7 @@ func (bc *BadgerCache) runGC() {
 	for range ticker.C {
 		err := bc.db.RunValueLogGC(0.5)
 		if err != nil && err != badger.ErrNoRewrite {
-			singleton.Logger.Printf("BadgerDB GC error: %v", err)
+			bc.logger.Printf("BadgerDB GC error: %v", err)
 		}
 	}
 }
