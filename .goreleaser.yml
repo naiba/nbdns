@@ -52,7 +52,14 @@ dockers_v2:
       - latest
     platforms:
       - linux/amd64
-      - linux/arm64/v8
+      - linux/arm64
+    extra_files:
+      - README.md
+    labels:
+      "org.opencontainers.image.created": "{{.Date}}"
+      "org.opencontainers.image.title": "{{.ProjectName}}"
+      "org.opencontainers.image.revision": "{{.FullCommit}}"
+      "org.opencontainers.image.version": "{{.Version}}"
 changelog:
   sort: asc
   filters:
