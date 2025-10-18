@@ -4,6 +4,7 @@
     "strategy": 2,
     "timeout": 2,
     "serve_addr": "127.0.0.1:8853",
+    "web_addr": "0.0.0.0:8854",
     "socks_proxy": "",
     "built_in_cache": false,
     "doh_server": {

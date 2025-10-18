@@ -3,6 +3,7 @@ const REFRESH_INTERVAL = 3000;
 let refreshTimer = null;
 let countdownTimer = null;
 let countdown = 0;
+let isCheckingUpdate = false;
 
 // 格式化数字，添加千位分隔符
 function formatNumber(num) {
@@ -121,13 +122,68 @@ function stopAutoRefresh() {
     }
 }
 
+// 加载版本号
+async function loadVersion() {
+    try {
+        const response = await fetch('/api/version');
+        if (!response.ok) {
+            throw new Error('获取版本号失败');
+        }
+        const data = await response.json();
+        document.getElementById('version-display').textContent = 'v' + data.version;
+    } catch (error) {
+        console.error('加载版本号出错:', error);
+        document.getElementById('version-display').textContent = 'v0.0.0';
+    }
+}
+
+// 检查更新
+async function checkUpdate() {
+    if (isCheckingUpdate) {
+        return;
+    }
+
+    const btn = document.getElementById('check-update-btn');
+    const originalText = btn.textContent;
+
+    try {
+        isCheckingUpdate = true;
+        btn.textContent = '⏳';
+        btn.disabled = true;
+
+        const response = await fetch('/api/check-update');
+        if (!response.ok) {
+            throw new Error('检查更新失败');
+        }
+
+        const data = await response.json();
+
+        if (data.has_update) {
+            alert(`${data.message}\n当前版本: v${data.current_version}\n最新版本: v${data.latest_version}\n\n请访问 GitHub 下载最新版本`);
+        } else {
+            alert(`${data.message}\n当前版本: v${data.current_version}`);
+        }
+    } catch (error) {
+        console.error('检查更新出错:', error);
+        alert('检查更新失败，请稍后再试');
+    } finally {
+        isCheckingUpdate = false;
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', function() {
     // 立即加载一次数据
     loadStats();
+    loadVersion();
 
     // 启动自动刷新
     startAutoRefresh();
+
+    // 绑定检查更新按钮
+    document.getElementById('check-update-btn').addEventListener('click', checkUpdate);
 
     // 页面可见性变化时控制刷新
     document.addEventListener('visibilitychange', function() {

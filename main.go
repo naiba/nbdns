@@ -43,6 +43,11 @@ func main() {
 		panic(err)
 	}
 
+	// 设置默认 Web 监听地址
+	if config.WebAddr == "" {
+		config.WebAddr = "0.0.0.0:8854"
+	}
+
 	singleton.InitLogger(config.Debug)
 
 	// 初始化统计系统
@@ -84,21 +89,24 @@ func main() {
 	}
 	singleton.Logger.Println("版本:", version)
 
+	// 创建更新检查通道
+	checkUpdateCh := make(chan struct{}, 1)
+
 	// 启动 Web 服务（监控面板 + pprof）
 	webServerHandler := http.NewServeMux()
 
 	// 注册监控面板路由
-	webHandler := web.NewHandler(stats.GlobalStats)
+	webHandler := web.NewHandler(stats.GlobalStats, version, checkUpdateCh)
 	webHandler.RegisterRoutes(webServerHandler)
 
 	// 如果启用 profiling，注册 pprof 路由
 	if config.Profiling {
 		webServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
-		singleton.Logger.Println("性能分析: http://0.0.0.0:8854/debug/pprof/")
+		singleton.Logger.Printf("性能分析: http://%s/debug/pprof/", config.WebAddr)
 	}
 
-	go http.ListenAndServe(":8854", webServerHandler)
-	singleton.Logger.Println("监控面板: http://0.0.0.0:8854/")
+	go http.ListenAndServe(config.WebAddr, webServerHandler)
+	singleton.Logger.Printf("监控面板: http://%s/", config.WebAddr)
 
 	// Start cache statistics logging if cache is enabled
 	if config.BuiltInCache {
@@ -112,7 +120,29 @@ func main() {
 	}
 
 	stopCh := make(chan error)
-	go checkUpdate(stopCh)
+
+	// 启动后台更新检查
+	go checkUpdate(checkUpdateCh, stopCh)
+
+	// 定时触发更新检查（生产者1：定时器）
+	go func() {
+		// 启动时立即检查一次
+		select {
+		case checkUpdateCh <- struct{}{}:
+		default:
+		}
+
+		// 定时检查
+		ticker := time.NewTicker(time.Duration(40+rand.Intn(20)) * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			select {
+			case checkUpdateCh <- struct{}{}:
+			default:
+				// 如果通道已满，跳过本次
+			}
+		}
+	}()
 
 	go func() {
 		stopCh <- server.ListenAndServe()
@@ -139,28 +169,27 @@ func main() {
 	singleton.Logger.Printf("server stopped: %+v", <-stopCh)
 }
 
-func checkUpdate(stopCh chan<- error) {
-	for {
-		go func() {
-			// 如果 version 为空，使用默认值
-			ver := version
-			if ver == "" {
-				ver = "0.0.0"
-			}
-			v := semver.MustParse(ver)
-			latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
-			if err != nil {
-				singleton.Logger.Printf("Error checking for updates: %v", err)
-				return
-			}
-			if latest.Version.Equals(v) {
-				singleton.Logger.Printf("No update available, current version: %s", v)
-			} else {
-				singleton.Logger.Printf("Updated to version: %s", latest.Version)
-				stopCh <- errors.New("Server upgraded to " + latest.Version.String())
-			}
-		}()
-		time.Sleep(time.Duration(40+rand.Intn(20)) * time.Minute)
+// checkUpdate 监听 channel 触发更新检查
+func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error) {
+	for range checkCh {
+		// 如果 version 为空，使用默认值
+		ver := version
+		if ver == "" {
+			ver = "0.0.0"
+		}
+		v := semver.MustParse(ver)
+		latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
+		if err != nil {
+			singleton.Logger.Printf("Error checking for updates: %v", err)
+			continue
+		}
+		if latest.Version.Equals(v) {
+			singleton.Logger.Printf("No update available, current version: %s", v)
+		} else {
+			singleton.Logger.Printf("Updated to version: %s", latest.Version)
+			stopCh <- errors.New("Server upgraded to " + latest.Version.String())
+			return
+		}
 	}
 }
 

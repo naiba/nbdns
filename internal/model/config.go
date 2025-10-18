@@ -26,6 +26,7 @@ type DohServerConfig struct {
 
 type Config struct {
 	ServeAddr    string           `json:"serve_addr,omitempty"`
+	WebAddr      string           `json:"web_addr,omitempty"`
 	DohServer    *DohServerConfig `json:"doh_server,omitempty"`
 	Strategy     int              `json:"strategy,omitempty"`
 	Timeout      int              `json:"timeout,omitempty"`

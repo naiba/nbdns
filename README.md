@@ -10,6 +10,8 @@
 2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
 
    ```yaml
+   serve_addr: "127.0.0.1:8853" # DNS 服务监听地址
+   web_addr: "0.0.0.0:8854" # Web 监控面板监听地址（默认 0.0.0.0:8854）
    socks_proxy: "192.168.55.254:9050" # 你的路由上的 socks5 服务
    strategy: 2
       # 1 - 最全结果
@@ -26,7 +28,7 @@
    doh_server:
       host: 0.0.0.0:8053 # DoH 服务器端口
       username: user # 可选的 basic auth
-      password: pass 
+      password: pass
    blacklist:
       - ".bing.com" # 强制 bing 通过非 primary 服务器解析
       - ".bing.com."
