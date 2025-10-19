@@ -13,7 +13,7 @@ body {
 }
 
 .container {
-    max-width: 1400px;
+    max-width: 1600px;
     margin: 0 auto;
 }
 
@@ -46,7 +46,7 @@ h1 {
 
 .dashboard {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr));
     gap: 20px;
 }
 
@@ -124,7 +124,7 @@ h2 {
 
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
     gap: 15px;
 }
 
@@ -226,6 +226,39 @@ td {
     font-weight: bold;
     text-align: center;
     font-size: 1.1em;
+    width: 70px;
+    max-width: 70px;
+}
+
+/* 优化表格列宽 */
+#top-clients-table th:nth-child(1),
+#top-clients-table td:nth-child(1),
+#top-domains-table th:nth-child(1),
+#top-domains-table td:nth-child(1) {
+    width: 70px;
+    max-width: 70px;
+}
+
+#top-clients-table th:nth-child(2),
+#top-clients-table td:nth-child(2),
+#top-domains-table th:nth-child(2),
+#top-domains-table td:nth-child(2) {
+    width: auto;
+    min-width: 150px;
+}
+
+#top-clients-table th:nth-child(3),
+#top-clients-table td:nth-child(3),
+#top-domains-table th:nth-child(3),
+#top-domains-table td:nth-child(3) {
+    width: 100px;
+    max-width: 100px;
+}
+
+#top-domains-table th:nth-child(4),
+#top-domains-table td:nth-child(4) {
+    width: auto;
+    min-width: 120px;
 }
 
 .rank-1 {
@@ -355,14 +388,20 @@ footer {
         font-size: 1.3em;
     }
 
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
     table {
-        font-size: 0.85em;
-        min-width: 100%;
+        font-size: 0.8em;
+        width: 100%;
         display: block;
     }
 
     thead, tbody, tr {
         display: block;
+        width: 100%;
     }
 
     thead {
@@ -373,10 +412,12 @@ footer {
 
     thead tr {
         display: flex;
+        width: 100%;
     }
 
     tbody tr {
         display: flex;
+        width: 100%;
         margin-bottom: 10px;
         border: 1px solid #e0e0e0;
         border-radius: 8px;
@@ -384,24 +425,87 @@ footer {
     }
 
     th, td {
-        padding: 8px 5px;
+        padding: 6px 4px;
         flex: 1;
         min-width: 0;
         word-break: break-word;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
-    th:nth-child(1), td:nth-child(1) {
-        flex: 2;
+    /* 上游服务器表格 */
+    #upstream-table th:nth-child(1),
+    #upstream-table td:nth-child(1) {
+        flex: 0 0 40%;
+        min-width: 100px;
     }
 
-    th:nth-child(2), td:nth-child(2),
-    th:nth-child(3), td:nth-child(3),
-    th:nth-child(4), td:nth-child(4) {
-        flex: 1;
+    #upstream-table th:nth-child(2),
+    #upstream-table td:nth-child(2),
+    #upstream-table th:nth-child(3),
+    #upstream-table td:nth-child(3),
+    #upstream-table th:nth-child(4),
+    #upstream-table td:nth-child(4) {
+        flex: 0 0 20%;
         text-align: center;
+        font-size: 0.85em;
     }
 
-    th:nth-child(5), td:nth-child(5) {
+    #upstream-table th:nth-child(5),
+    #upstream-table td:nth-child(5) {
         display: none;
+    }
+
+    /* Top 客户端表格 - 优化排名列宽度 */
+    #top-clients-table th:nth-child(1),
+    #top-clients-table td:nth-child(1) {
+        flex: 0 0 35px;
+        min-width: 35px;
+        text-align: center;
+        padding: 6px 2px;
+    }
+
+    #top-clients-table th:nth-child(2),
+    #top-clients-table td:nth-child(2) {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    #top-clients-table th:nth-child(3),
+    #top-clients-table td:nth-child(3) {
+        flex: 0 0 60px;
+        min-width: 60px;
+        text-align: center;
+        font-size: 0.85em;
+    }
+
+    /* Top 域名表格 - 优化排名列宽度 */
+    #top-domains-table th:nth-child(1),
+    #top-domains-table td:nth-child(1) {
+        flex: 0 0 35px;
+        min-width: 35px;
+        text-align: center;
+        padding: 6px 2px;
+    }
+
+    #top-domains-table th:nth-child(2),
+    #top-domains-table td:nth-child(2) {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    #top-domains-table th:nth-child(3),
+    #top-domains-table td:nth-child(3) {
+        flex: 0 0 55px;
+        min-width: 55px;
+        text-align: center;
+        font-size: 0.85em;
+    }
+
+    #top-domains-table th:nth-child(4),
+    #top-domains-table td:nth-child(4) {
+        flex: 0 0 80px;
+        min-width: 80px;
+        font-size: 0.85em;
     }
 }

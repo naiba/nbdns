@@ -2,8 +2,8 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,7 +103,30 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	return
 }
 
+// removeEDNS 清理请求中的 EDNS 客户端子网信息
+func (h *Handler) removeEDNS(req *dns.Msg) {
+	opt := req.IsEdns0()
+	if opt == nil {
+		return
+	}
+
+	// 过滤掉 EDNS Client Subnet 选项
+	var newOptions []dns.EDNS0
+	for _, option := range opt.Option {
+		if _, ok := option.(*dns.EDNS0_SUBNET); !ok {
+			// 保留非 ECS 的其他选项
+			newOptions = append(newOptions, option)
+		} else {
+			h.logger.Printf("Removed EDNS Client Subnet from request")
+		}
+	}
+	opt.Option = newOptions
+}
+
 func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
+	// 清理 EDNS 客户端子网信息
+	h.removeEDNS(req)
+
 	var msgs []*dns.Msg
 
 	switch h.strategy {
@@ -140,22 +163,21 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 }
 
 func getDnsRequestCacheKey(m *dns.Msg) string {
-	var edns string
 	var dnssec string
-	o := m.IsEdns0()
-	if o != nil {
+	if o := m.IsEdns0(); o != nil {
 		// 区分 DNSSEC 请求，避免将非 DNSSEC 响应返回给需要 DNSSEC 的客户端
 		if o.Do() {
 			dnssec = "DO"
 		}
-		for _, s := range o.Option {
-			switch e := s.(type) {
-			case *dns.EDNS0_SUBNET:
-				edns = e.Address.String()
-			}
-		}
+		// 服务多区域的公共dns使用
+		// for _, s := range o.Option {
+		// 	switch e := s.(type) {
+		// 	case *dns.EDNS0_SUBNET:
+		// 		edns = e.Address.String()
+		// 	}
+		// }
 	}
-	return model.GetDomainNameFromDnsMsg(m) + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns + "#" + dnssec
+	return fmt.Sprintf("%s#%d#%s", model.GetDomainNameFromDnsMsg(m), m.Question[0].Qtype, dnssec)
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {

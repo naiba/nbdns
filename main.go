@@ -158,24 +158,26 @@ func main() {
 	go checkUpdate(checkUpdateCh, stopCh, debugLogger)
 
 	// 定时触发更新检查（生产者1：定时器）
-	go func() {
-		// 启动时立即检查一次
-		select {
-		case checkUpdateCh <- struct{}{}:
-		default:
-		}
-
-		// 定时检查
-		ticker := time.NewTicker(time.Duration(40+rand.Intn(20)) * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
+	if version != "" {
+		go func() {
+			// 启动时立即检查一次
 			select {
 			case checkUpdateCh <- struct{}{}:
 			default:
-				// 如果通道已满，跳过本次
 			}
-		}
-	}()
+
+			// 定时检查
+			ticker := time.NewTicker(time.Duration(40+rand.Intn(20)) * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				select {
+				case checkUpdateCh <- struct{}{}:
+				default:
+					// 如果通道已满，跳过本次
+				}
+			}
+		}()
+	}
 
 	go func() {
 		stopCh <- server.ListenAndServe()
