@@ -345,8 +345,21 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	return resp
 }
 
-func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
-	// 提取客户端 IP
+// extractClientIPFromDNS 从 DNS 请求中提取客户端 IP
+// 优先级：EDNS Client Subnet > RemoteAddr
+func extractClientIPFromDNS(w dns.ResponseWriter, req *dns.Msg) string {
+	// 1. 优先检查 EDNS Client Subnet (ECS)
+	// ECS 是 DNS 协议标准，用于传递真实客户端 IP
+	if opt := req.IsEdns0(); opt != nil {
+		for _, option := range opt.Option {
+			if ecs, ok := option.(*dns.EDNS0_SUBNET); ok {
+				// ECS 中的 Address 就是客户端真实 IP
+				return ecs.Address.String()
+			}
+		}
+	}
+
+	// 2. 从 RemoteAddr 获取
 	var clientIP string
 	if addr := w.RemoteAddr(); addr != nil {
 		if udpAddr, ok := addr.(*net.UDPAddr); ok {
@@ -355,6 +368,13 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 			clientIP = tcpAddr.IP.String()
 		}
 	}
+
+	return clientIP
+}
+
+func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
+	// 提取客户端 IP
+	clientIP := extractClientIPFromDNS(w, req)
 
 	// 提取域名
 	var domain string

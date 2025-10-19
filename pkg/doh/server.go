@@ -2,7 +2,9 @@ package doh
 
 import (
 	"encoding/base64"
+	"net"
 	"net/http"
+	"strings"
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/stats"
@@ -71,13 +73,7 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 提取客户端 IP
-	clientIP := r.RemoteAddr
-	// 如果有 X-Forwarded-For 或 X-Real-IP 头，使用它们
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		clientIP = xff
-	} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		clientIP = xri
-	}
+	clientIP := extractClientIP(r)
 
 	// 提取域名
 	var domain string
@@ -101,4 +97,36 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", dohMediaType)
 	w.Write(data)
+}
+
+// extractClientIP 从 HTTP 请求中提取真实的客户端 IP
+func extractClientIP(r *http.Request) string {
+	// 1. 优先检查 X-Forwarded-For（适用于多层代理）
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For 格式: client, proxy1, proxy2
+		// 取第一个 IP（最原始的客户端 IP）
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 {
+			clientIP := strings.TrimSpace(parts[0])
+			// 验证是否为有效 IP
+			if ip := net.ParseIP(clientIP); ip != nil {
+				return clientIP
+			}
+		}
+	}
+
+	// 2. 检查 X-Real-IP（单层代理常用）
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		if ip := net.ParseIP(xri); ip != nil {
+			return xri
+		}
+	}
+
+	// 3. 使用 RemoteAddr，需要去掉端口号
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+
+	// 4. 如果无法解析端口，直接返回（可能已经是纯 IP）
+	return r.RemoteAddr
 }
