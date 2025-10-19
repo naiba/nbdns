@@ -2,78 +2,133 @@
 
 [![release](https://img.shields.io/github/v/release/naiba/nbdns?color=brightgreen&label=NbDNS&style=for-the-badge&logo=github)](https://github.com/naiba/nbdns/releases)
 
-:seal: 一个聪明的 DNS 中继器，放置于 AdGuard Home 上游，可提升 DNS 解析准确性。
+:seal: 一个聪明的 DNS 中继器，可提升 DNS 解析准确性，自带管理面板，可替代 AdguardHome。
 
-![截图](http://inews.gtimg.com/newsapp_ls/0/14876631746/0)
+![截图](./doc/screenshot.png)
 
-1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新的 `nbdns`
-2. 复制 `data/config.json.example` 到 `data/config.json`，修改其中配置
+## 快速开始
 
-   ```yaml
-   serve_addr: "127.0.0.1:8853" # DNS 服务监听地址
-   web_addr: "0.0.0.0:8854" # Web 监控面板监听地址（默认 0.0.0.0:8854）
-   socks_proxy: "192.168.55.254:9050" # 你的路由上的 socks5 服务
-   strategy: 2
-      # 1 - 最全结果
-      # 2 - 最快结果（推荐）
-      # 3 - 任一结果（不建议使用）
-   timeout: 4 # 超时时间（秒）
-   built_in_cache: false # 启用内建缓存
-   bootstrap: "223.5.5.5" # 解析上游 DNS (dot/doh) 的 IP 使用的 bootstrap 服务器
-   upstreams: 上游 DNS 列表（首推使用 tcp-tls，启用 tls 的服务器必须使用主机名）
-      is_primary: 将国内 DNS 的 is_primary 标记为 true
-      use_socks: 可以为非 is_primary 启用 socks5
-      match: # 此上游仅解析匹配的域名列表，比如 Tor 的 onion，可以专门某个后缀定义上游
-         - ".onion."
-   doh_server:
-      host: 0.0.0.0:8053 # DoH 服务器端口
-      username: user # 可选的 basic auth
-      password: pass
-   blacklist:
-      - ".bing.com" # 强制 bing 通过非 primary 服务器解析
-      - ".bing.com."
-   ```
+1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新版本
+2. 下载 [china_ip_list.txt](https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt) 到 `data` 文件夹
+3. 创建配置文件 `data/config.json`（参考下方配置示例）
+4. 启动 `./nbdns`
+5. 访问 `http://localhost:8854` 查看监控面板
+6. 将 `127.0.0.1:8853` 配置到 AdGuard Home 的上游服务器
 
-3. 从 <https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt> 处下载 `china_ip_list.txt` 放置到 `data` 文件夹中
-4. 你的文件层级应该是这样的
-
-   ```shell
-   |- nbdns
-   |- data
-      |- config.json
-      |- china_ip_list.txt
-   ```
-
-5. 启动 `./nbdns`
-6. 在 `adguardhome:2333/#dns` 将 `127.0.0.1:8853` 配置到 `上游服务器`
-
-在运行 `nbdns` 机器上测试：
-
-```shell
-dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.baidu.com
-dig @127.0.0.1 -p 8853 +time=100 +retry=0 www.reddit.com
+**文件结构：**
+```
+|- nbdns
+|- data
+   |- config.json
+   |- china_ip_list.txt
 ```
 
+**测试命令：**
+```bash
+dig @127.0.0.1 -p 8853 www.baidu.com
+dig @127.0.0.1 -p 8853 www.google.com
+```
 Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
-## FAQ
+## 配置示例
 
-### 匹配规则
-
-```python
-'.' => 匹配所有
-'a.com' => a.com
-'.a.com' => a.a.com c.a.com e.d.a.com
+```json
+{
+  "serve_addr": "127.0.0.1:8853",
+  "web_addr": "0.0.0.0:8854",
+  "strategy": 2,
+  "timeout": 4,
+  "built_in_cache": true,
+  "socks_proxy": "192.168.1.254:3838",
+  "bootstrap": [
+    {"address": "tcp://8.8.4.4:53"},
+    {"address": "tcp://1.0.0.1:53"}
+  ],
+  "upstreams": [
+    {"address": "udp://223.5.5.5:53", "is_primary": true},
+    {"address": "udp://223.6.6.6:53", "is_primary": true},
+    {"address": "tcp-tls://dns.google:853", "use_socks": true},
+    {"address": "tcp-tls://one.one.one.one:853", "use_socks": true},
+    {"address": "https://user:pass@doh.example.com/dns-query", "match": [".onion"]}
+  ],
+  "doh_server": {
+    "username": "admin",
+    "password": "secret"
+  },
+  "blacklist": [".bing.com"]
+}
 ```
 
-### Docker
+### 配置说明
 
-```shell
-docker run -name nbdns --restart always -d -v data路径:/nbdns/data -p 配置的serve_addr端口:配置的serve_addr端口/udp ghcr.io/naiba/nbdns
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `serve_addr` | DNS 服务监听地址 | 必填 |
+| `web_addr` | Web 面板和 DoH 服务端口 | `0.0.0.0:8854` |
+| `strategy` | 查询策略：1-最全结果，2-最快结果（推荐），3-任一结果 | `2` |
+| `timeout` | 上游超时时间（秒） | `4` |
+| `built_in_cache` | 启用内建缓存 | `false` |
+| `socks_proxy` | SOCKS5 代理地址 | 可选 |
+| `bootstrap` | Bootstrap DNS 服务器（仅支持 IP） | 必填 |
+| `upstreams` | 上游 DNS 列表 | 必填 |
+| `doh_server` | DoH 服务配置 | 可选 |
+| `blacklist` | 域名黑名单（强制使用非 primary DNS） | 可选 |
+
+**上游 DNS 配置：**
+- `is_primary`: 标记国内 DNS
+- `use_socks`: 通过 SOCKS5 代理连接
+- `match`: 仅匹配特定域名后缀
+
+**域名匹配规则：**
+- `.` 匹配所有
+- `a.com` 仅匹配 a.com
+- `.a.com` 匹配 a.a.com, c.a.com, e.d.a.com 等
+
+## 功能特性
+
+### :chart_with_upwards_trend: Web 监控面板
+访问 `http://localhost:8854` 查看：
+- 运行时状态（运行时长、内存、Goroutines、GC）
+- DNS 查询统计（总查询数、缓存命中率、失败数）
+- 上游服务器状态（查询数、错误率、最后使用时间）
+- Top 客户端 IP 和查询域名排行
+- 统计数据重置功能
+
+### :lock: DoH (DNS over HTTPS)
+DoH 服务与 Web 面板共用端口，访问路径：`/dns-query`
+
+**配置示例：**
+```json
+{
+  "doh_server": {
+    "username": "admin",
+    "password": "secret"
+  }
+}
 ```
 
-### OpenWRT 自启动
+**测试：**
+```bash
+curl -v -H "Accept: application/dns-message" \
+  -u "user:password" \
+  "http://localhost:8854/dns-query?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB"
+```
 
+**浏览器配置（Firefox）：**
+设置 → 网络设置 → 启用基于 HTTPS 的 DNS → 自定义 → `http://your-server:8854/dns-query`
+
+## 部署
+
+### :whale: Docker
+```bash
+docker run --name nbdns --restart always -d \
+  -v /path/to/data:/nbdns/data \
+  -p 8853:8853/udp \
+  -p 8854:8854 \
+  ghcr.io/naiba/nbdns
+```
+
+### :package: OpenWRT 自启动
 首先在 release 下载对应的二进制解压 zip 包后放置到 `/root`，然后 `chmod -R 777 /root/nbdns` 赋予执行权限，然后创建 `/etc/init.d/nbdns`：
 
 ```shell
@@ -90,9 +145,9 @@ pid_file="/var/run/${name}.pid"
 
 start_service() {
     echo "Starting ${name}"
-    procd_open_instance 
+    procd_open_instance
     procd_set_param command ${cmd}
-    procd_set_param respawn 
+    procd_set_param respawn
 
     # respawn automatically if something died, be careful if you have an alternative process supervisor
     # if process exits sooner than respawn_threshold, it is considered crashed and after 5 retries the service is stopped

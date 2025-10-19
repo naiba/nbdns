@@ -20,9 +20,8 @@ const (
 )
 
 type DohServerConfig struct {
-	Host     string `json:"host,omitempty"`
-	Username string `json:"username,omitempty"`
-	Password string `json:"password,omitempty"`
+	Username string `json:"username,omitempty"` // DoH Basic Auth 用户名（可选）
+	Password string `json:"password,omitempty"` // DoH Basic Auth 密码（可选）
 }
 
 type Config struct {

@@ -8,7 +8,6 @@
     "socks_proxy": "",
     "built_in_cache": false,
     "doh_server": {
-        "host": "127.0.0.1:8053",
         "username": "user",
         "password": "password"
     },

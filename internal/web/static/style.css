@@ -69,6 +69,59 @@ h2 {
     padding-bottom: 10px;
 }
 
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.card-header h2 {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 200px;
+}
+
+.stats-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.stats-duration {
+    color: #666;
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.reset-btn {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 500;
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.reset-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(245, 87, 108, 0.3);
+}
+
+.reset-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.reset-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -97,6 +150,11 @@ h2 {
 
 .stat-item.success {
     background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: white;
+}
+
+.stat-item.info {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
     color: white;
 }
 
@@ -161,6 +219,47 @@ td {
 .error-high {
     color: #f5576c;
     font-weight: bold;
+}
+
+/* Top N 排名样式 */
+.rank-cell {
+    font-weight: bold;
+    text-align: center;
+    font-size: 1.1em;
+}
+
+.rank-1 {
+    background: linear-gradient(90deg, rgba(255, 215, 0, 0.15) 0%, rgba(255, 215, 0, 0) 100%);
+}
+
+.rank-1 .rank-cell {
+    color: #FFD700;
+    text-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+}
+
+.rank-2 {
+    background: linear-gradient(90deg, rgba(192, 192, 192, 0.15) 0%, rgba(192, 192, 192, 0) 100%);
+}
+
+.rank-2 .rank-cell {
+    color: #C0C0C0;
+    text-shadow: 0 0 10px rgba(192, 192, 192, 0.3);
+}
+
+.rank-3 {
+    background: linear-gradient(90deg, rgba(205, 127, 50, 0.15) 0%, rgba(205, 127, 50, 0) 100%);
+}
+
+.rank-3 .rank-cell {
+    color: #CD7F32;
+    text-shadow: 0 0 10px rgba(205, 127, 50, 0.3);
+}
+
+.domain-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 footer {

@@ -26,6 +26,11 @@ type CachedMsg struct {
 	Expires time.Time `json:"expires"`
 }
 
+type CachedMsgData struct {
+	DNSWire []byte    `json:"dns_wire"`
+	Expires time.Time `json:"expires"`
+}
+
 // BadgerCache wraps BadgerDB for DNS query caching
 type BadgerCache struct {
 	db     *badger.DB
@@ -66,7 +71,19 @@ func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 
 // Set stores a DNS message in the cache with the given key and TTL
 func (bc *BadgerCache) Set(key string, msg *CachedMsg, ttl time.Duration) error {
-	data, err := json.Marshal(msg)
+	// Pack DNS message to wire format
+	dnsData, err := msg.Msg.Pack()
+	if err != nil {
+		return fmt.Errorf("failed to pack DNS message: %w", err)
+	}
+
+	// Create a simple structure with expiration time and DNS wire format
+	cacheData := CachedMsgData{
+		DNSWire: dnsData,
+		Expires: msg.Expires,
+	}
+
+	data, err := json.Marshal(cacheData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal cached message: %w", err)
 	}
@@ -88,8 +105,24 @@ func (bc *BadgerCache) Get(key string) (*CachedMsg, bool) {
 		}
 
 		return item.Value(func(val []byte) error {
-			cachedMsg = &CachedMsg{}
-			return json.Unmarshal(val, cachedMsg)
+			// Unmarshal the cache data structure
+			var cacheData CachedMsgData
+
+			if err := json.Unmarshal(val, &cacheData); err != nil {
+				return fmt.Errorf("failed to unmarshal cache data: %w", err)
+			}
+
+			// Unpack DNS message from wire format
+			msg := new(dns.Msg)
+			if err := msg.Unpack(cacheData.DNSWire); err != nil {
+				return fmt.Errorf("failed to unpack DNS message: %w", err)
+			}
+
+			cachedMsg = &CachedMsg{
+				Msg:     msg,
+				Expires: cacheData.Expires,
+			}
+			return nil
 		})
 	})
 
@@ -97,7 +130,7 @@ func (bc *BadgerCache) Get(key string) (*CachedMsg, bool) {
 		if err == badger.ErrKeyNotFound {
 			return nil, false
 		}
-		bc.logger.Printf("Cache get error: %v", err)
+		bc.logger.Printf("Cache get error for key %s: %v", key, err)
 		return nil, false
 	}
 

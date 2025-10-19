@@ -87,7 +87,7 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	m.RecursionDesired = true
 	m.Question = make([]dns.Question, 1)
 	m.Question[0] = dns.Question{Name: host, Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	res := h.Exchange(m)
+	res := h.exchange(m)
 	// 取一个 IPv4 地址
 	for i := 0; i < len(res.Answer); i++ {
 		if aRecord, ok := res.Answer[i].(*dns.A); ok {
@@ -103,7 +103,7 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	return
 }
 
-func (h *Handler) Exchange(req *dns.Msg) *dns.Msg {
+func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	var msgs []*dns.Msg
 
 	switch h.strategy {
@@ -141,8 +141,13 @@ func (h *Handler) Exchange(req *dns.Msg) *dns.Msg {
 
 func getDnsRequestCacheKey(m *dns.Msg) string {
 	var edns string
+	var dnssec string
 	o := m.IsEdns0()
 	if o != nil {
+		// 区分 DNSSEC 请求，避免将非 DNSSEC 响应返回给需要 DNSSEC 的客户端
+		if o.Do() {
+			dnssec = "DO"
+		}
 		for _, s := range o.Option {
 			switch e := s.(type) {
 			case *dns.EDNS0_SUBNET:
@@ -150,7 +155,7 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 			}
 		}
 	}
-	return model.GetDomainNameFromDnsMsg(m) + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns
+	return model.GetDomainNameFromDnsMsg(m) + "#" + strconv.Itoa(int(m.Question[0].Qtype)) + "#" + edns + "#" + dnssec
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {
@@ -166,18 +171,131 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 	return time.Duration(ttl) * time.Second
 }
 
-func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
+// shouldCacheResponse 判断响应是否应该被缓存
+func shouldCacheResponse(m *dns.Msg) bool {
+	// 不缓存服务器错误响应
+	if m.Rcode == dns.RcodeServerFailure {
+		return false
+	}
+
+	// 不缓存格式错误的响应
+	if m.Rcode == dns.RcodeFormatError {
+		return false
+	}
+
+	// NXDOMAIN (域名不存在) 可以缓存，但时间较短（由 getDnsResponseTtl 控制）
+	// NOERROR 和 NXDOMAIN 都可以缓存
+	return m.Rcode == dns.RcodeSuccess || m.Rcode == dns.RcodeNameError
+}
+
+// validateResponse 验证 DNS 响应，防止缓存投毒
+// 返回 true 表示响应有效，false 表示可能存在投毒风险
+func validateResponse(req *dns.Msg, resp *dns.Msg, debugLogger logger.Logger) bool {
+	// 1. 检查响应是否为空
+	if resp == nil {
+		return false
+	}
+
+	// 2. 检查请求和响应的问题数量
+	if len(req.Question) == 0 || len(resp.Question) == 0 {
+		return true // 如果没有问题部分，跳过验证（某些响应可能没有问题部分）
+	}
+
+	// 3. 验证域名匹配（不区分大小写）
+	if !strings.EqualFold(req.Question[0].Name, resp.Question[0].Name) {
+		debugLogger.Printf("DNS response validation failed: domain mismatch - request: %s, response: %s",
+			req.Question[0].Name, resp.Question[0].Name)
+		return false
+	}
+
+	// 4. 验证查询类型匹配
+	if req.Question[0].Qtype != resp.Question[0].Qtype {
+		debugLogger.Printf("DNS response validation failed: qtype mismatch - request: %d, response: %d",
+			req.Question[0].Qtype, resp.Question[0].Qtype)
+		return false
+	}
+
+	// 5. 验证查询类别匹配（通常都是 IN - Internet）
+	if req.Question[0].Qclass != resp.Question[0].Qclass {
+		debugLogger.Printf("DNS response validation failed: qclass mismatch - request: %d, response: %d",
+			req.Question[0].Qclass, resp.Question[0].Qclass)
+		return false
+	}
+
+	// 6. 验证 Answer 部分的域名（防止返回无关域名的记录）
+	requestDomain := strings.ToLower(strings.TrimSuffix(req.Question[0].Name, "."))
+	validDomains := make(map[string]bool)
+	validDomains[requestDomain] = true
+
+	// 第一遍：收集所有 CNAME 目标域名
+	for _, answer := range resp.Answer {
+		if answer.Header().Rrtype == dns.TypeCNAME {
+			if cname, ok := answer.(*dns.CNAME); ok {
+				cnameTarget := strings.ToLower(strings.TrimSuffix(cname.Target, "."))
+				validDomains[cnameTarget] = true
+			}
+		}
+	}
+
+	// 第二遍：验证所有应答记录
+	for _, answer := range resp.Answer {
+		answerDomain := strings.ToLower(strings.TrimSuffix(answer.Header().Name, "."))
+
+		// 检查应答记录的域名是否在有效域名列表中
+		if !validDomains[answerDomain] {
+			// 对于 CNAME 记录，域名必须是请求域名
+			if answer.Header().Rrtype == dns.TypeCNAME {
+				if answerDomain != requestDomain {
+					debugLogger.Printf("DNS response validation failed: CNAME domain mismatch - request: %s, CNAME: %s",
+						requestDomain, answerDomain)
+					return false
+				}
+			} else {
+				// 对于其他记录类型，记录警告但不拒绝（某些服务器可能返回额外记录）
+				debugLogger.Printf("DNS response validation warning: answer domain not in valid chain - request: %s, answer: %s (type: %d)",
+					requestDomain, answerDomain, answer.Header().Rrtype)
+			}
+		}
+	}
+
+	// 7. 检查 TTL 值的合理性（防止异常的 TTL 值）
+	for _, answer := range resp.Answer {
+		ttl := answer.Header().Ttl
+		// TTL 不应该超过 7 天（604800 秒）
+		if ttl > 604800 {
+			debugLogger.Printf("DNS response validation warning: suspiciously high TTL: %d seconds for %s",
+				ttl, answer.Header().Name)
+		}
+	}
+
+	return true
+}
+
+// HandleDnsMsg 处理 DNS 查询的核心逻辑（支持缓存和统计）
+// clientIP 和 domain 用于统计，如果为空则自动从请求中提取 domain
+func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	h.logger.Printf("nbdns::request %+v\n", req)
 
 	// 记录查询统计
 	if h.stats != nil {
 		h.stats.RecordQuery()
+
+		// 提取域名（如果未提供）
+		if domain == "" && len(req.Question) > 0 {
+			domain = req.Question[0].Name
+		}
+
+		// 记录客户端查询
+		if clientIP != "" || domain != "" {
+			h.stats.RecordClientQuery(clientIP, domain)
+		}
 	}
 
-	var m string
+	// 检查缓存
+	var cacheKey string
 	if h.builtInCache != nil {
-		m = getDnsRequestCacheKey(req)
-		if v, ok := h.builtInCache.Get(m); ok {
+		cacheKey = getDnsRequestCacheKey(req)
+		if v, ok := h.builtInCache.Get(cacheKey); ok {
 			// 记录缓存命中
 			if h.stats != nil {
 				h.stats.RecordCacheHit()
@@ -193,10 +311,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 				header.Ttl = uint32(time.Until(v.Expires).Seconds())
 			}
 			resp.SetReply(req)
-			if err := w.WriteMsg(resp); err != nil {
-				h.logger.Printf("WriteMsg from cache error: %+v", err)
-			}
-			return
+			return resp
 		}
 		// 记录缓存未命中
 		if h.stats != nil {
@@ -204,7 +319,8 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 		}
 	}
 
-	resp := h.Exchange(req)
+	// 从上游获取响应
+	resp := h.exchange(req)
 
 	// 记录失败查询
 	if resp.Rcode == dns.RcodeServerFailure && h.stats != nil {
@@ -212,21 +328,46 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	resp.SetReply(req)
-	if err := w.WriteMsg(resp); err != nil {
-		h.logger.Printf("WriteMsg from response error: %+v", err)
-	}
-
 	h.logger.Printf("nbdns::resp: %+v\n", resp)
 
-	if h.builtInCache != nil {
+	// 验证响应并缓存（防止缓存投毒）
+	if h.builtInCache != nil && shouldCacheResponse(resp) && validateResponse(req, resp, h.logger) {
 		ttl := getDnsResponseTtl(resp)
 		cachedMsg := &cache.CachedMsg{
 			Msg:     resp,
 			Expires: time.Now().Add(ttl),
 		}
-		if err := h.builtInCache.Set(m, cachedMsg, ttl); err != nil {
+		if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl); err != nil {
 			h.logger.Printf("Failed to cache response: %v", err)
 		}
+	}
+
+	return resp
+}
+
+func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
+	// 提取客户端 IP
+	var clientIP string
+	if addr := w.RemoteAddr(); addr != nil {
+		if udpAddr, ok := addr.(*net.UDPAddr); ok {
+			clientIP = udpAddr.IP.String()
+		} else if tcpAddr, ok := addr.(*net.TCPAddr); ok {
+			clientIP = tcpAddr.IP.String()
+		}
+	}
+
+	// 提取域名
+	var domain string
+	if len(req.Question) > 0 {
+		domain = req.Question[0].Name
+	}
+
+	// 调用核心处理逻辑
+	resp := h.HandleDnsMsg(req, clientIP, domain)
+
+	// 写入响应
+	if err := w.WriteMsg(resp); err != nil {
+		h.logger.Printf("WriteMsg error: %+v", err)
 	}
 }
 

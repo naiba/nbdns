@@ -4,6 +4,7 @@ let refreshTimer = null;
 let countdownTimer = null;
 let countdown = 0;
 let isCheckingUpdate = false;
+let isResettingStats = false;
 
 // 格式化数字，添加千位分隔符
 function formatNumber(num) {
@@ -23,11 +24,16 @@ function updateRuntimeStats(runtime) {
     document.getElementById('mem-sys').textContent = formatNumber(runtime.mem_sys_mb || 0) + ' MB';
     document.getElementById('mem-total').textContent = formatNumber(runtime.mem_total_mb || 0) + ' MB';
     document.getElementById('num-gc').textContent = formatNumber(runtime.num_gc || 0);
+
+    // 更新统计时长
+    const statsDuration = runtime.stats_duration_str || '-';
+    document.getElementById('stats-duration').textContent = '统计时长: ' + statsDuration;
 }
 
 // 更新查询统计
 function updateQueryStats(queries) {
     document.getElementById('total-queries').textContent = formatNumber(queries.total || 0);
+    document.getElementById('doh-queries').textContent = formatNumber(queries.doh || 0);
     document.getElementById('cache-hits').textContent = formatNumber(queries.cache_hits || 0);
     document.getElementById('cache-misses').textContent = formatNumber(queries.cache_misses || 0);
     document.getElementById('failed-queries').textContent = formatNumber(queries.failed || 0);
@@ -53,6 +59,54 @@ function updateUpstreamTable(upstreams) {
                 <td class="${errorClass}">${formatNumber(upstream.errors || 0)}</td>
                 <td class="${errorClass}">${formatPercent(upstream.error_rate || 0)}</td>
                 <td>${upstream.last_used || 'Never'}</td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+}
+
+// 更新 Top 客户端 IP 表格
+function updateTopClientsTable(topClients) {
+    const tbody = document.getElementById('top-clients-tbody');
+
+    if (!topClients || topClients.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="no-data">暂无数据</td></tr>';
+        return;
+    }
+
+    let html = '';
+    topClients.forEach((client, index) => {
+        const rankClass = index < 3 ? `rank-${index + 1}` : '';
+        html += `
+            <tr class="${rankClass}">
+                <td class="rank-cell">${index + 1}</td>
+                <td>${client.key || '-'}</td>
+                <td>${formatNumber(client.count || 0)}</td>
+            </tr>
+        `;
+    });
+    tbody.innerHTML = html;
+}
+
+// 更新 Top 查询域名表格
+function updateTopDomainsTable(topDomains) {
+    const tbody = document.getElementById('top-domains-tbody');
+
+    if (!topDomains || topDomains.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="no-data">暂无数据</td></tr>';
+        return;
+    }
+
+    let html = '';
+    topDomains.forEach((domain, index) => {
+        const rankClass = index < 3 ? `rank-${index + 1}` : '';
+        const topClient = domain.top_client || '-';
+        html += `
+            <tr class="${rankClass}">
+                <td class="rank-cell">${index + 1}</td>
+                <td class="domain-cell" title="${domain.key}">${domain.key || '-'}</td>
+                <td>${formatNumber(domain.count || 0)}</td>
+                <td>${topClient}</td>
             </tr>
         `;
     });
@@ -92,6 +146,8 @@ async function loadStats() {
         updateRuntimeStats(data.runtime);
         updateQueryStats(data.queries);
         updateUpstreamTable(data.upstreams);
+        updateTopClientsTable(data.top_clients);
+        updateTopDomainsTable(data.top_domains);
 
         // 重置倒计时
         resetCountdown();
@@ -173,6 +229,52 @@ async function checkUpdate() {
     }
 }
 
+// 重置统计数据
+async function resetStats() {
+    if (isResettingStats) {
+        return;
+    }
+
+    // 确认对话框
+    if (!confirm('确定要重置所有统计数据吗？此操作无法撤销。')) {
+        return;
+    }
+
+    const btn = document.getElementById('reset-stats-btn');
+    const originalText = btn.textContent;
+
+    try {
+        isResettingStats = true;
+        btn.textContent = '⏳ 重置中...';
+        btn.disabled = true;
+
+        const response = await fetch('/api/stats/reset', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('重置统计数据失败');
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message || '统计数据已重置');
+            // 立即刷新数据
+            await loadStats();
+        } else {
+            alert('重置失败: ' + (data.message || '未知错误'));
+        }
+    } catch (error) {
+        console.error('重置统计数据出错:', error);
+        alert('重置统计数据失败，请稍后再试');
+    } finally {
+        isResettingStats = false;
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+}
+
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', function() {
     // 立即加载一次数据
@@ -184,6 +286,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 绑定检查更新按钮
     document.getElementById('check-update-btn').addEventListener('click', checkUpdate);
+
+    // 绑定重置统计按钮
+    document.getElementById('reset-stats-btn').addEventListener('click', resetStats);
 
     // 页面可见性变化时控制刷新
     document.addEventListener('visibilitychange', function() {

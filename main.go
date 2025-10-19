@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -52,19 +53,26 @@ func main() {
 	}
 
 	// 根据配置创建正式的 logger 和 stats 实例
-	log := logger.New(config.Debug)
+	debugLogger := logger.New(config.Debug)
 	statsRecorder := stats.NewStats()
+
+	// 加载持久化的统计数据
+	if err := statsRecorder.Load(dataPath); err != nil {
+		log.Printf("Failed to load stats from disk: %v", err)
+	} else {
+		log.Printf("Stats loaded successfully from disk")
+	}
 
 	// 更新 upstreams 的 logger 为正式的 logger
 	for i := 0; i < len(config.Bootstrap); i++ {
-		config.Bootstrap[i].SetLogger(log)
+		config.Bootstrap[i].SetLogger(debugLogger)
 	}
 	for i := 0; i < len(config.Upstreams); i++ {
-		config.Upstreams[i].SetLogger(log)
+		config.Upstreams[i].SetLogger(debugLogger)
 	}
 
 	// Bootstrap handler 不需要缓存，只是用于初始化连接
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath, log, nil)
+	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath, debugLogger, nil)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -74,11 +82,20 @@ func main() {
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
 	// 只有 upstream handler 需要缓存
-	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath, log, statsRecorder)
+	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	// Setup graceful shutdown
 	defer func() {
+		// 保存统计数据
+		log.Printf("Saving stats before shutdown...")
+		if err := statsRecorder.Save(dataPath); err != nil {
+			log.Printf("Error saving stats: %v", err)
+		} else {
+			log.Printf("Stats saved successfully")
+		}
+
+		// 关闭缓存
 		if err := upstreamHandler.Close(); err != nil {
 			log.Printf("Error closing cache: %v", err)
 		}
@@ -94,20 +111,24 @@ func main() {
 		log.Println("禁用缓存")
 	}
 
-	if config.DohServer != nil {
-		log.Println("启用 DoH 服务器:", config.DohServer.Host)
-	}
 	log.Println("版本:", version)
 
 	// 创建更新检查通道
 	checkUpdateCh := make(chan struct{}, 1)
 
-	// 启动 Web 服务（监控面板 + pprof）
+	// 启动 Web 服务（监控面板 + DoH + pprof）
 	webServerHandler := http.NewServeMux()
 
 	// 注册监控面板路由
-	webHandler := web.NewHandler(statsRecorder, version, checkUpdateCh, log)
+	webHandler := web.NewHandler(statsRecorder, version, checkUpdateCh, debugLogger)
 	webHandler.RegisterRoutes(webServerHandler)
+
+	// 如果启用 DoH，注册 DoH 路由
+	if config.DohServer != nil {
+		dohServer := doh.NewServer(config.DohServer.Username, config.DohServer.Password, upstreamHandler.HandleDnsMsg, statsRecorder)
+		dohServer.RegisterRoutes(webServerHandler)
+		log.Printf("DoH 服务: http://%s/dns-query", config.WebAddr)
+	}
 
 	// 如果启用 profiling，注册 pprof 路由
 	if config.Profiling {
@@ -118,21 +139,23 @@ func main() {
 	go http.ListenAndServe(config.WebAddr, webServerHandler)
 	log.Printf("监控面板: http://%s/", config.WebAddr)
 
-	// Start cache statistics logging if cache is enabled
-	if config.BuiltInCache {
-		go func() {
-			ticker := time.NewTicker(10 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				log.Printf("Cache Stats: %s", upstreamHandler.GetCacheStats())
+	// 定时保存统计数据（每小时）
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := statsRecorder.Save(dataPath); err != nil {
+				debugLogger.Printf("Failed to save stats to disk: %v", err)
+			} else {
+				debugLogger.Printf("Stats saved successfully to disk")
 			}
-		}()
-	}
+		}
+	}()
 
 	stopCh := make(chan error)
 
 	// 启动后台更新检查
-	go checkUpdate(checkUpdateCh, stopCh, log)
+	go checkUpdate(checkUpdateCh, stopCh, debugLogger)
 
 	// 定时触发更新检查（生产者1：定时器）
 	go func() {
@@ -161,13 +184,6 @@ func main() {
 		stopCh <- serverTCP.ListenAndServe()
 	}()
 
-	if config.DohServer != nil {
-		go func() {
-			dohServer := doh.NewServer(config.DohServer.Host, config.DohServer.Username, config.DohServer.Password, upstreamHandler.Exchange)
-			stopCh <- dohServer.Serve()
-		}()
-	}
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -180,7 +196,7 @@ func main() {
 }
 
 // checkUpdate 监听 channel 触发更新检查
-func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error, log logger.Logger) {
+func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error, debugLogger logger.Logger) {
 	for range checkCh {
 		// 如果 version 为空，使用默认值
 		ver := version
@@ -190,11 +206,11 @@ func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error, log logger.Logger
 		v := semver.MustParse(ver)
 		latest, err := selfupdate.UpdateSelf(v, "naiba/nbdns")
 		if err != nil {
-			log.Printf("Error checking for updates: %v", err)
+			debugLogger.Printf("Error checking for updates: %v", err)
 			continue
 		}
 		if latest.Version.Equals(v) {
-			log.Printf("No update available, current version: %s", v)
+			debugLogger.Printf("No update available, current version: %s", v)
 		} else {
 			log.Printf("Updated to version: %s", latest.Version)
 			stopCh <- errors.New("Server upgraded to " + latest.Version.String())

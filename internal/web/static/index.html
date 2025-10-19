@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NBDNS 监控面板</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=1.0.0">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <link rel="stylesheet" href="style.css?v=1.2.0">
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -50,11 +53,21 @@
 
             <!-- DNS 查询统计 -->
             <section class="card">
-                <h2>DNS 查询统计</h2>
+                <div class="card-header">
+                    <h2>DNS 查询统计</h2>
+                    <div class="stats-controls">
+                        <span class="stats-duration" id="stats-duration">统计时长: -</span>
+                        <button id="reset-stats-btn" class="reset-btn" title="重置统计数据">🔄 重置</button>
+                    </div>
+                </div>
                 <div class="stats-grid">
                     <div class="stat-item highlight">
                         <span class="stat-label">总查询数</span>
                         <span class="stat-value" id="total-queries">-</span>
+                    </div>
+                    <div class="stat-item info">
+                        <span class="stat-label">DoH 请求</span>
+                        <span class="stat-value" id="doh-queries">-</span>
                     </div>
                     <div class="stat-item success">
                         <span class="stat-label">缓存命中</span>
@@ -97,6 +110,49 @@
                     </table>
                 </div>
             </section>
+
+            <!-- Top 客户端 IP -->
+            <section class="card">
+                <h2>Top 客户端 IP</h2>
+                <div class="table-container">
+                    <table id="top-clients-table">
+                        <thead>
+                            <tr>
+                                <th>排名</th>
+                                <th>IP 地址</th>
+                                <th>查询次数</th>
+                            </tr>
+                        </thead>
+                        <tbody id="top-clients-tbody">
+                            <tr>
+                                <td colspan="3" class="no-data">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Top 查询域名 -->
+            <section class="card">
+                <h2>Top 查询域名</h2>
+                <div class="table-container">
+                    <table id="top-domains-table">
+                        <thead>
+                            <tr>
+                                <th>排名</th>
+                                <th>域名</th>
+                                <th>查询次数</th>
+                                <th>Top 客户端</th>
+                            </tr>
+                        </thead>
+                        <tbody id="top-domains-tbody">
+                            <tr>
+                                <td colspan="4" class="no-data">暂无数据</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </div>
 
         <footer>
@@ -110,6 +166,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=1.0.0"></script>
+    <script src="app.js?v=1.2.0"></script>
 </body>
+
 </html>

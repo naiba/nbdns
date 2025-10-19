@@ -5,26 +5,27 @@ import (
 	"net/http"
 
 	"github.com/miekg/dns"
+	"github.com/naiba/nbdns/internal/stats"
 )
 
 type DoHServer struct {
-	host, username, password string
-	handler                  func(req *dns.Msg) *dns.Msg
+	username, password string
+	handler            func(req *dns.Msg, clientIP, domain string) *dns.Msg
+	stats              stats.StatsRecorder
 }
 
-func NewServer(host, username, password string, handler func(req *dns.Msg) *dns.Msg) *DoHServer {
+func NewServer(username, password string, handler func(req *dns.Msg, clientIP, domain string) *dns.Msg, statsRecorder stats.StatsRecorder) *DoHServer {
 	return &DoHServer{
-		host:     host,
 		username: username,
 		password: password,
 		handler:  handler,
+		stats:    statsRecorder,
 	}
 }
 
-func (s *DoHServer) Serve() error {
-	dohHandler := http.NewServeMux()
-	dohHandler.HandleFunc("/dns-query", s.handleQuery)
-	return http.ListenAndServe(s.host, dohHandler)
+// RegisterRoutes 注册 DoH 路由到现有的 HTTP 服务器
+func (s *DoHServer) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/dns-query", s.handleQuery)
 }
 
 func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +64,28 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 		return
 	}
-	resp := s.handler(msg)
+
+	// 记录 DoH 查询统计
+	if s.stats != nil {
+		s.stats.RecordDoHQuery()
+	}
+
+	// 提取客户端 IP
+	clientIP := r.RemoteAddr
+	// 如果有 X-Forwarded-For 或 X-Real-IP 头，使用它们
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		clientIP = xff
+	} else if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		clientIP = xri
+	}
+
+	// 提取域名
+	var domain string
+	if len(msg.Question) > 0 {
+		domain = msg.Question[0].Name
+	}
+
+	resp := s.handler(msg, clientIP, domain)
 	if resp == nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("nil response"))

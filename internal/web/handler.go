@@ -35,6 +35,7 @@ func NewHandler(s stats.StatsRecorder, ver string, checkCh chan<- struct{}, log 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// API路由
 	mux.HandleFunc("/api/stats", h.handleStats)
+	mux.HandleFunc("/api/stats/reset", h.handleStatsReset)
 	mux.HandleFunc("/api/version", h.handleVersion)
 	mux.HandleFunc("/api/check-update", h.handleCheckUpdate)
 
@@ -66,6 +67,39 @@ func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	// 编码JSON并返回
 	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
 		h.logger.Printf("Error encoding stats JSON: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
+// ResetResponse 重置响应
+type ResetResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// handleStatsReset 处理统计数据重置请求
+func (h *Handler) handleStatsReset(w http.ResponseWriter, r *http.Request) {
+	// 只允许POST请求
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 重置统计数据
+	h.stats.Reset()
+	h.logger.Printf("Statistics reset by user request")
+
+	// 设置响应头
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// 返回成功响应
+	if err := json.NewEncoder(w).Encode(ResetResponse{
+		Success: true,
+		Message: "统计数据已重置",
+	}); err != nil {
+		h.logger.Printf("Error encoding reset response JSON: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
