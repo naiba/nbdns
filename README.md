@@ -13,7 +13,7 @@
 3. 创建配置文件 `data/config.json`（参考下方配置示例）
 4. 启动 `./nbdns`
 5. 访问 `http://localhost:8854` 查看监控面板
-6. 将 `127.0.0.1:8853` 配置到 AdGuard Home 的上游服务器
+6. DNS TCP/UDP `127.0.0.1:8853`, DoH `http://localhost:8854/dns-query`
 
 **文件结构：**
 ```
@@ -61,18 +61,18 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 
 ### 配置说明
 
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `serve_addr` | DNS 服务监听地址 | 必填 |
-| `web_addr` | Web 面板和 DoH 服务端口 | `0.0.0.0:8854` |
-| `strategy` | 查询策略：1-最全结果，2-最快结果（推荐），3-任一结果 | `2` |
-| `timeout` | 上游超时时间（秒） | `4` |
-| `built_in_cache` | 启用内建缓存 | `false` |
-| `socks_proxy` | SOCKS5 代理地址 | 可选 |
-| `bootstrap` | Bootstrap DNS 服务器（仅支持 IP） | 必填 |
-| `upstreams` | 上游 DNS 列表 | 必填 |
-| `doh_server` | DoH 服务配置 | 可选 |
-| `blacklist` | 域名黑名单（强制使用非 primary DNS） | 可选 |
+| 字段             | 说明                                                 | 默认值         |
+| ---------------- | ---------------------------------------------------- | -------------- |
+| `serve_addr`     | DNS 服务监听地址                                     | 必填           |
+| `web_addr`       | Web 面板和 DoH 服务端口                              | `0.0.0.0:8854` |
+| `strategy`       | 查询策略：1-最全结果，2-最快结果（推荐），3-任一结果 | `2`            |
+| `timeout`        | 上游超时时间（秒）                                   | `4`            |
+| `built_in_cache` | 启用内建缓存                                         | `false`        |
+| `socks_proxy`    | SOCKS5 代理地址                                      | 可选           |
+| `bootstrap`      | Bootstrap DNS 服务器（仅支持 IP）                    | 必填           |
+| `upstreams`      | 上游 DNS 列表                                        | 必填           |
+| `doh_server`     | DoH 服务配置                                         | 可选           |
+| `blacklist`      | 域名黑名单（强制使用非 primary DNS）                 | 可选           |
 
 **上游 DNS 配置：**
 - `is_primary`: 标记国内 DNS
