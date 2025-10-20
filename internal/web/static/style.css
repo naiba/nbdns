@@ -359,153 +359,105 @@ footer {
 @media (max-width: 768px) {
     body {
         padding: 10px;
+        overflow-x: hidden;
+    }
+
+    .container {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
     }
 
     .dashboard {
         grid-template-columns: 1fr;
+        gap: 15px;
     }
 
     header {
         flex-direction: column;
-        gap: 15px;
+        gap: 10px;
         text-align: center;
-        padding: 20px;
+        padding: 15px;
+        width: 100%;
     }
 
     h1 {
         font-size: 1.5em;
+        word-break: break-word;
     }
 
     .card {
         padding: 15px;
+        width: 100%;
+        overflow-x: hidden;
     }
 
     .stats-grid {
         grid-template-columns: 1fr;
+        gap: 10px;
     }
 
     .stat-value {
         font-size: 1.3em;
+        word-break: break-word;
     }
 
     .table-container {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
+        margin: 0 -15px;
+        padding: 0 15px;
+        width: calc(100% + 30px);
     }
 
     table {
-        font-size: 0.8em;
+        font-size: 0.75em;
         width: 100%;
-        display: block;
-    }
-
-    thead, tbody, tr {
-        display: block;
-        width: 100%;
-    }
-
-    thead {
-        position: sticky;
-        top: 0;
-        z-index: 1;
-    }
-
-    thead tr {
-        display: flex;
-        width: 100%;
-    }
-
-    tbody tr {
-        display: flex;
-        width: 100%;
-        margin-bottom: 10px;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        overflow: hidden;
+        min-width: 500px;
     }
 
     th, td {
-        padding: 6px 4px;
-        flex: 1;
-        min-width: 0;
+        padding: 8px 6px;
         word-break: break-word;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: normal;
     }
 
-    /* 上游服务器表格 */
-    #upstream-table th:nth-child(1),
-    #upstream-table td:nth-child(1) {
-        flex: 0 0 40%;
-        min-width: 100px;
-    }
-
-    #upstream-table th:nth-child(2),
-    #upstream-table td:nth-child(2),
-    #upstream-table th:nth-child(3),
-    #upstream-table td:nth-child(3),
-    #upstream-table th:nth-child(4),
-    #upstream-table td:nth-child(4) {
-        flex: 0 0 20%;
-        text-align: center;
-        font-size: 0.85em;
-    }
-
+    /* 上游服务器表格 - 移动端隐藏最后使用时间列 */
     #upstream-table th:nth-child(5),
     #upstream-table td:nth-child(5) {
         display: none;
     }
 
-    /* Top 客户端表格 - 优化排名列宽度 */
-    #top-clients-table th:nth-child(1),
-    #top-clients-table td:nth-child(1) {
-        flex: 0 0 35px;
-        min-width: 35px;
-        text-align: center;
-        padding: 6px 2px;
+    /* 优化域名单元格，防止超长域名溢出 */
+    .domain-cell {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
-    #top-clients-table th:nth-child(2),
-    #top-clients-table td:nth-child(2) {
-        flex: 1 1 auto;
-        min-width: 0;
+    /* 确保卡片标题区域不溢出 */
+    .card-header {
+        flex-wrap: wrap;
+        gap: 10px;
     }
 
-    #top-clients-table th:nth-child(3),
-    #top-clients-table td:nth-child(3) {
-        flex: 0 0 60px;
-        min-width: 60px;
-        text-align: center;
+    .card-header h2 {
+        width: 100%;
+        min-width: auto;
+    }
+
+    .stats-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .stats-duration {
         font-size: 0.85em;
     }
 
-    /* Top 域名表格 - 优化排名列宽度 */
-    #top-domains-table th:nth-child(1),
-    #top-domains-table td:nth-child(1) {
-        flex: 0 0 35px;
-        min-width: 35px;
-        text-align: center;
-        padding: 6px 2px;
-    }
-
-    #top-domains-table th:nth-child(2),
-    #top-domains-table td:nth-child(2) {
-        flex: 1 1 auto;
-        min-width: 0;
-    }
-
-    #top-domains-table th:nth-child(3),
-    #top-domains-table td:nth-child(3) {
-        flex: 0 0 55px;
-        min-width: 55px;
-        text-align: center;
-        font-size: 0.85em;
-    }
-
-    #top-domains-table th:nth-child(4),
-    #top-domains-table td:nth-child(4) {
-        flex: 0 0 80px;
-        min-width: 80px;
+    .reset-btn {
+        padding: 6px 12px;
         font-size: 0.85em;
     }
 }
