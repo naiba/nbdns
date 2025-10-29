@@ -428,6 +428,29 @@ footer {
         display: none;
     }
 
+    /* Top 客户端 IP 表格 - 移动端优化列宽 */
+    #top-clients-table th:nth-child(1),
+    #top-clients-table td:nth-child(1) {
+        width: 50px;
+        max-width: 50px;
+    }
+
+    #top-clients-table th:nth-child(2),
+    #top-clients-table td:nth-child(2) {
+        width: 130px;
+        max-width: 130px;
+        min-width: 130px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    #top-clients-table th:nth-child(3),
+    #top-clients-table td:nth-child(3) {
+        width: auto;
+        max-width: none;
+    }
+
     /* 优化域名单元格，防止超长域名溢出 */
     .domain-cell {
         max-width: 150px;
