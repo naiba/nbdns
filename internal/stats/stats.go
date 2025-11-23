@@ -32,11 +32,11 @@ type Stats struct {
 	StatsStartTime time.Time // 统计数据开始时间（可持久化）
 
 	// 查询统计
-	TotalQueries   atomic.Uint64
-	DoHQueries     atomic.Uint64
-	CacheHits      atomic.Uint64
-	CacheMisses    atomic.Uint64
-	FailedQueries  atomic.Uint64
+	TotalQueries  atomic.Uint64
+	DoHQueries    atomic.Uint64
+	CacheHits     atomic.Uint64
+	CacheMisses   atomic.Uint64
+	FailedQueries atomic.Uint64
 
 	// 上游服务器统计
 	upstreamStats map[string]*UpstreamStats
@@ -95,15 +95,24 @@ func (s *Stats) RecordFailed() {
 
 // RecordUpstreamQuery 记录上游服务器查询
 func (s *Stats) RecordUpstreamQuery(address string, isError bool) {
-	s.mu.Lock()
+	// 先尝试读锁快速查找
+	s.mu.RLock()
 	us, ok := s.upstreamStats[address]
+	s.mu.RUnlock()
+
+	// 如果不存在才使用写锁创建
 	if !ok {
-		us = &UpstreamStats{
-			Address: address,
+		s.mu.Lock()
+		// 双重检查，防止并发创建
+		us, ok = s.upstreamStats[address]
+		if !ok {
+			us = &UpstreamStats{
+				Address: address,
+			}
+			s.upstreamStats[address] = us
 		}
-		s.upstreamStats[address] = us
+		s.mu.Unlock()
 	}
-	s.mu.Unlock()
 
 	us.TotalQueries.Add(1)
 	if isError {
@@ -181,16 +190,16 @@ type UpstreamStatsJSON struct {
 
 // TopNItemJSON Top N 项目（JSON格式）
 type TopNItemJSON struct {
-	Key       string `json:"key"`        // IP 地址或域名
-	Count     uint64 `json:"count"`      // 查询次数
+	Key       string `json:"key"`                  // IP 地址或域名
+	Count     uint64 `json:"count"`                // 查询次数
 	TopClient string `json:"top_client,omitempty"` // 查询最多的客户端 IP（仅域名统计有）
 }
 
 // StatsSnapshot 完整统计快照
 type StatsSnapshot struct {
-	Runtime    RuntimeStats        `json:"runtime"`    // 运行时信息
-	Queries    QueryStats          `json:"queries"`    // 查询统计
-	Upstreams  []UpstreamStatsJSON `json:"upstreams"`  // 上游服务器统计
+	Runtime    RuntimeStats        `json:"runtime"`     // 运行时信息
+	Queries    QueryStats          `json:"queries"`     // 查询统计
+	Upstreams  []UpstreamStatsJSON `json:"upstreams"`   // 上游服务器统计
 	TopClients []TopNItemJSON      `json:"top_clients"` // Top 客户端 IP
 	TopDomains []TopNItemJSON      `json:"top_domains"` // Top 查询域名
 }
@@ -373,7 +382,7 @@ type TopNTracker struct {
 type TopNItem struct {
 	Key       string
 	Count     uint64
-	TopClient string // 对于域名统计，记录查询最多的客户端 IP
+	TopClient string            // 对于域名统计，记录查询最多的客户端 IP
 	clients   map[string]uint64 // 临时记录客户端分布（仅用于找 Top1）
 }
 

@@ -157,10 +157,10 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 		maxIdleTime := time.Second * time.Duration(up.config.Timeout*10)
 		timeout := time.Second * time.Duration(up.config.Timeout)
 		p := net2.NewSimpleConnectionPool(net2.ConnectionOptions{
-			MaxActiveConnections: 10,
-			MaxIdleConnections:   5,
+			MaxActiveConnections: int32(up.config.MaxActiveConnections),
+			MaxIdleConnections:   uint32(up.config.MaxIdleConnections),
 			MaxIdleTime:          &maxIdleTime,
-			DialMaxConcurrency:   10,
+			DialMaxConcurrency:   20,
 			ReadTimeout:          timeout,
 			WriteTimeout:         timeout,
 			Dial: func(network, address string) (net.Conn, error) {

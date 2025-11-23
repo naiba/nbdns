@@ -39,6 +39,13 @@ type Config struct {
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`
 
+	// Connection pool settings
+	MaxActiveConnections int `json:"max_active_connections,omitempty"` // Default: 50
+	MaxIdleConnections   int `json:"max_idle_connections,omitempty"`   // Default: 20
+
+	// Stats persistence interval in minutes
+	StatsSaveInterval int `json:"stats_save_interval,omitempty"` // Default: 5 minutes
+
 	BlacklistSplited [][]string `json:"-"`
 }
 
@@ -50,6 +57,20 @@ func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger, log logger
 	if err := json.Unmarshal([]byte(body), c); err != nil {
 		return err
 	}
+
+	// Set default connection pool values
+	if c.MaxActiveConnections == 0 {
+		c.MaxActiveConnections = 50
+	}
+	if c.MaxIdleConnections == 0 {
+		c.MaxIdleConnections = 20
+	}
+
+	// Set default stats save interval (5 minutes)
+	if c.StatsSaveInterval == 0 {
+		c.StatsSaveInterval = 5
+	}
+
 	for i := 0; i < len(c.Bootstrap); i++ {
 		c.Bootstrap[i].Init(c, ipRanger, log)
 		if net.ParseIP(c.Bootstrap[i].host) == nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+
 	"github.com/naiba/nbdns/internal/cache"
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/stats"
@@ -315,38 +316,41 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 
 	// 检查缓存
 	var cacheKey string
+	var respCache *dns.Msg
 	if h.builtInCache != nil {
 		cacheKey = getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(cacheKey); ok {
-			// 记录缓存命中
 			if h.stats != nil {
 				h.stats.RecordCacheHit()
 			}
-
-			resp := v.Msg.Copy()
-			// 更新缓存的 answer 的 TTL
-			for i := 0; i < len(resp.Answer); i++ {
-				header := resp.Answer[i].Header()
-				if header == nil {
-					continue
+			respCache = v.Msg.Copy()
+			if v.Expires.After(time.Now()) {
+				msg := replyUpdateTtl(req, respCache, uint32(time.Until(v.Expires).Seconds()))
+				if len(msg.Answer) > 0 {
+					return msg
 				}
-				header.Ttl = uint32(time.Until(v.Expires).Seconds())
 			}
-			resp.SetReply(req)
-			return resp
-		}
-		// 记录缓存未命中
-		if h.stats != nil {
-			h.stats.RecordCacheMiss()
+		} else {
+			if h.stats != nil {
+				h.stats.RecordCacheMiss()
+			}
 		}
 	}
 
 	// 从上游获取响应
 	resp := h.exchange(req)
 
-	// 记录失败查询
-	if resp.Rcode == dns.RcodeServerFailure && h.stats != nil {
-		h.stats.RecordFailed()
+	if resp.Rcode == dns.RcodeServerFailure {
+		if h.stats != nil {
+			h.stats.RecordFailed()
+		}
+		// 上游失败时使用任何可用缓存（即使过期）作为降级
+		if respCache != nil {
+			msg := replyUpdateTtl(req, respCache, 12)
+			if len(msg.Answer) > 0 {
+				return msg
+			}
+		}
 	}
 
 	resp.SetReply(req)
@@ -359,7 +363,7 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 			Msg:     resp,
 			Expires: time.Now().Add(ttl),
 		}
-		if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl); err != nil {
+		if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl+time.Hour); err != nil {
 			h.logger.Printf("Failed to cache response: %v", err)
 		}
 	}
@@ -413,17 +417,92 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	}
 }
 
-func uniqueAnswer(intSlice []dns.RR) []dns.RR {
-	keys := make(map[string]bool)
-	list := []dns.RR{}
-	for _, entry := range intSlice {
-		col := strings.Split(entry.String(), "\t")
-		if _, value := keys[col[4]]; !value {
-			keys[col[4]] = true
-			list = append(list, entry)
+// uniqueAnswer 去除重复的 DNS 资源记录
+// 基于域名、类型和记录数据进行去重，比字符串分割更高效和可靠
+func uniqueAnswer(records []dns.RR) []dns.RR {
+	if len(records) == 0 {
+		return records
+	}
+
+	seen := make(map[string]bool, len(records))
+	result := make([]dns.RR, 0, len(records))
+
+	for _, rr := range records {
+		if rr == nil {
+			continue
+		}
+
+		header := rr.Header()
+		if header == nil {
+			continue
+		}
+
+		// 构造唯一键：域名 + 类型 + 记录数据
+		// 使用 strings.Builder 优化字符串拼接性能
+		var builder strings.Builder
+		builder.Grow(128) // Pre-allocate reasonable capacity
+
+		var key string
+		switch v := rr.(type) {
+		case *dns.A:
+			builder.WriteString(header.Name)
+			builder.WriteString("|A|")
+			builder.WriteString(v.A.String())
+			key = builder.String()
+		case *dns.AAAA:
+			builder.WriteString(header.Name)
+			builder.WriteString("|AAAA|")
+			builder.WriteString(v.AAAA.String())
+			key = builder.String()
+		case *dns.CNAME:
+			builder.WriteString(header.Name)
+			builder.WriteString("|CNAME|")
+			builder.WriteString(v.Target)
+			key = builder.String()
+		case *dns.MX:
+			builder.WriteString(header.Name)
+			builder.WriteString("|MX|")
+			builder.WriteString(fmt.Sprintf("%d|%s", v.Preference, v.Mx))
+			key = builder.String()
+		case *dns.NS:
+			builder.WriteString(header.Name)
+			builder.WriteString("|NS|")
+			builder.WriteString(v.Ns)
+			key = builder.String()
+		case *dns.PTR:
+			builder.WriteString(header.Name)
+			builder.WriteString("|PTR|")
+			builder.WriteString(v.Ptr)
+			key = builder.String()
+		case *dns.TXT:
+			builder.WriteString(header.Name)
+			builder.WriteString("|TXT|")
+			builder.WriteString(strings.Join(v.Txt, "|"))
+			key = builder.String()
+		case *dns.SRV:
+			builder.WriteString(header.Name)
+			builder.WriteString("|SRV|")
+			builder.WriteString(fmt.Sprintf("%d|%d|%d|%s", v.Priority, v.Weight, v.Port, v.Target))
+			key = builder.String()
+		case *dns.SOA:
+			builder.WriteString(header.Name)
+			builder.WriteString("|SOA|")
+			builder.WriteString(v.Ns)
+			builder.WriteString("|")
+			builder.WriteString(v.Mbox)
+			key = builder.String()
+		default:
+			// 对于其他类型，回退到完整字符串表示
+			key = rr.String()
+		}
+
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, rr)
 		}
 	}
-	return list
+
+	return result
 }
 
 func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
@@ -587,4 +666,85 @@ func (h *Handler) GetCacheStats() string {
 		return h.builtInCache.Stats()
 	}
 	return "Cache disabled"
+}
+
+// replyUpdateTtl 准备缓存响应以发送给客户端，执行必要的修正：
+// 1. 设置正确的 Message ID（通过 SetReply）
+// 2. 更新所有 RR 的 TTL 为剩余时间（最低 0）
+// 3. 调整 OPT RR 的 UDP size 为客户端请求的值
+// 4. 清除 ECS Scope Length（标记为缓存答案）
+// 5. 检查过期的 RRSIG 并移除
+func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
+	now := time.Now().Unix()
+
+	// 辅助函数：更新 RR 列表的 TTL，并检测过期 RRSIG
+	updateRRs := func(rrs []dns.RR) []dns.RR {
+		var validRRs []dns.RR
+		for _, rr := range rrs {
+			header := rr.Header()
+			if header == nil {
+				continue
+			}
+
+			// 检查 RRSIG 是否过期
+			if rrsig, ok := rr.(*dns.RRSIG); ok {
+				if rrsig.Expiration > 0 && uint32(now) > rrsig.Expiration {
+					// RRSIG 已过期，跳过这条记录
+					continue
+				}
+			}
+
+			// 更新 TTL（最低为 0）
+			header.Ttl = ttl
+			validRRs = append(validRRs, rr)
+		}
+		return validRRs
+	}
+
+	// 更新所有部分的 TTL 并移除过期 RRSIG
+	resp.Answer = updateRRs(resp.Answer)
+	resp.Ns = updateRRs(resp.Ns)
+
+	// Extra 部分需要特殊处理 OPT RR
+	var validExtra []dns.RR
+	var reqOpt *dns.OPT
+	if reqOpt = req.IsEdns0(); reqOpt != nil {
+		// 客户端有 EDNS0，获取其 UDP size
+	}
+
+	for _, rr := range resp.Extra {
+		if opt, ok := rr.(*dns.OPT); ok {
+			// 处理 OPT RR
+			if reqOpt != nil {
+				// 使用客户端请求的 UDP size
+				opt.SetUDPSize(reqOpt.UDPSize())
+			}
+
+			// 清除 ECS Scope Length
+			for i, option := range opt.Option {
+				if ecs, ok := option.(*dns.EDNS0_SUBNET); ok {
+					// 将 Scope Length 设为 0，表示这是缓存答案
+					ecs.SourceScope = 0
+					opt.Option[i] = ecs
+				}
+			}
+			validExtra = append(validExtra, opt)
+		} else {
+			// 非 OPT RR，正常更新 TTL 和检查 RRSIG
+			header := rr.Header()
+			if header != nil {
+				if rrsig, ok := rr.(*dns.RRSIG); ok {
+					if rrsig.Expiration > 0 && uint32(now) > rrsig.Expiration {
+						continue // 跳过过期的 RRSIG
+					}
+				}
+				header.Ttl = ttl
+			}
+			validExtra = append(validExtra, rr)
+		}
+	}
+	resp.Extra = validExtra
+
+	// SetReply 会设置正确的 Message ID 和其他响应标志
+	return resp.SetReply(req)
 }

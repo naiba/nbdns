@@ -139,11 +139,12 @@ func main() {
 	go http.ListenAndServe(config.WebAddr, webServerHandler)
 	log.Printf("监控面板: http://%s/", config.WebAddr)
 
-	// 定时保存统计数据（每小时）
+	// 定时保存统计数据（使用配置的间隔）
+	statsSaveTicker := time.NewTicker(time.Duration(config.StatsSaveInterval) * time.Minute)
+	defer statsSaveTicker.Stop()
+
 	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
+		for range statsSaveTicker.C {
 			if err := statsRecorder.Save(dataPath); err != nil {
 				debugLogger.Printf("Failed to save stats to disk: %v", err)
 			} else {
