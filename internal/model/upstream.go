@@ -177,6 +177,36 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 	}
 }
 
+// isPrivateIP checks if an IP address is in the private IP range
+// Private IP ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	// Convert to 4-byte representation for IPv4
+	ip4 := ip.To4()
+	if ip4 != nil {
+		// 10.0.0.0/8
+		if ip4[0] == 10 {
+			return true
+		}
+		// 172.16.0.0/12
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+		return false
+	}
+	// IPv6 private ranges (fc00::/7 - Unique Local Addresses)
+	if len(ip) == 16 && (ip[0]&0xfe) == 0xfc {
+		return true
+	}
+	return false
+}
+
 func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
 	domain := GetDomainNameFromDnsMsg(r)
 	inBlacklist := utils.HasMatchedRule(up.config.BlacklistSplited, domain)
@@ -192,6 +222,14 @@ func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
 			}
 			ip = typeAAAA.AAAA
 		}
+		
+		// Private IPs (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) should always be considered valid
+		// They are used for internal networks and are not subject to geographical restrictions
+		if isPrivateIP(ip) {
+			up.logger.Printf("checkPrimary result %s: %s@%s -> private IP, skipping primary check", up.Address, domain, ip)
+			continue
+		}
+		
 		isPrimary, err := up.ipRanger.Contains(ip)
 		if err != nil {
 			up.logger.Printf("ipRanger query ip %s failed: %s", ip, err)
