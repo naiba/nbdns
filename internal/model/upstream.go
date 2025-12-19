@@ -223,7 +223,9 @@ func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
 			ip = typeAAAA.AAAA
 		}
 		
-		// Private IPs (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) should always be considered valid
+		// Private IPs should always be considered valid regardless of primary/non-primary status
+		// IPv4 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+		// IPv6 private ranges: fc00::/7 (Unique Local Addresses)
 		// They are used for internal networks and are not subject to geographical restrictions
 		if isPrivateIP(ip) {
 			up.logger.Printf("checkPrimary result %s: %s@%s -> private IP, skipping primary check", up.Address, domain, ip)
