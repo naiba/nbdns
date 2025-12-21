@@ -38,43 +38,42 @@ func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 
 	opts := badger.DefaultOptions(dbPath)
 
-	// 针对家用路由器等嵌入式设备的优化配置
-	// MemTable：减少到 4MB，降低内存占用
-	opts.MemTableSize = 4 << 20 // 4MB
+	// 针对树莓派等嵌入式设备的优化配置（目标：总内存 ~32MB）
+	// MemTable：4MB，BadgerDB 默认保持 2 个 MemTable
+	opts.MemTableSize = 4 << 20 // 4MB (内存占用 ~8MB)
 
-	// ValueLog：减少到 4MB，减少磁盘 I/O 和存储占用
+	// ValueLog：4MB
 	opts.ValueLogFileSize = 4 << 20 // 4MB
 
-	// BlockCache：减少到 16MB，大幅降低内存使用
+	// BlockCache：16MB，提升读取性能
 	opts.BlockCacheSize = 16 << 20 // 16MB
 
-	// IndexCache：限制索引缓存大小为 8MB
-	opts.IndexCacheSize = 8 << 20
+	// IndexCache：8MB，加速索引查找
+	opts.IndexCacheSize = 8 << 20 // 8MB
 
-	// Level 0 tables：减少数量以降低内存占用
+	// Level 0 tables
 	opts.NumLevelZeroTables = 2
 	opts.NumLevelZeroTablesStall = 4
 
-	// 压缩选项：降低压缩等级以减少 CPU 使用
-	opts.Compression = options.None // 关闭压缩，节省 CPU（DNS 响应本身较小）
+	// 关闭压缩，节省 CPU
+	opts.Compression = options.None
 
-	// ValueThreshold：降低到 512 字节，更多数据内联存储
-	// DNS 响应通常小于 512 字节，内联存储可以减少磁盘访问
+	// DNS 响应通常较小，内联存储减少磁盘访问
 	opts.ValueThreshold = 512
 
-	// 禁用同步写入以提高性能，DNS 缓存丢失可接受
+	// 异步写入，提高性能
 	opts.SyncWrites = false
 
-	// 减少 ValueLog 条目数量
-	opts.ValueLogMaxEntries = 50000 // 50k
+	// ValueLog 条目数量
+	opts.ValueLogMaxEntries = 50000
 
-	// 限制并发压缩数量，降低 CPU 和 I/O 压力
-	opts.NumCompactors = 1
+	// 压缩线程数
+	opts.NumCompactors = 2
 
-	// 禁用检测冲突，减少内存开销
+	// 禁用冲突检测，提升写入性能
 	opts.DetectConflicts = false
 
-	// 设置日志级别为 ERROR，减少日志开销
+	// 禁用内部日志
 	opts.Logger = nil
 
 	db, err := badger.Open(opts)
@@ -158,6 +157,7 @@ func (bc *BadgerCache) Get(key string) (*CachedMsg, bool) {
 		if err == badger.ErrKeyNotFound {
 			return nil, false
 		}
+		// 缓存数据损坏或格式不兼容，返回未命中，后续 Set 会覆盖
 		bc.logger.Printf("Cache get error for key %s: %v", key, err)
 		return nil, false
 	}
