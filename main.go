@@ -267,5 +267,5 @@ func detectDataPath() string {
 		}
 	}
 
-	panic("没有检测到数据目录")
+	panic("没有检测到IP数据 data/china_ip_list.txt")
 }
