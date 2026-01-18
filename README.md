@@ -9,7 +9,10 @@
 ## 快速开始
 
 1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新版本
-2. 下载 [china_ip_list.txt](https://github.com/17mon/china_ip_list/raw/master/china_ip_list.txt) 到 `data` 文件夹
+2. 下载 [china.txt](https://raw.githubusercontent.com/gaoyifan/china-operator-ip/refs/heads/ip-lists/china.txt) 并改名为 `china_ip_list.txt` 到 `data` 文件夹
+   ```shell
+   wget https://raw.githubusercontent.com/gaoyifan/china-operator-ip/refs/heads/ip-lists/china.txt -O data/china_ip_list.txt
+   ```
 3. 创建配置文件 `data/config.json`（参考下方配置示例）
 4. 启动 `./nbdns`
 5. 访问 `http://localhost:8854` 查看监控面板
