@@ -1,172 +1,103 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NbDNS 监控面板</title>
-    <link rel="icon"
-        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=1.2.4">
+    <meta name="color-scheme" content="light dark">
+    <title>NbDNS</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
+    <link rel="stylesheet" href="style.css?v=3.0.0">
 </head>
-
 <body>
-    <div class="container">
-        <header>
-            <h1>NbDNS 监控面板</h1>
-            <div class="update-info">
-                <span id="last-update">正在加载...</span>
+    <nav>
+        <div class="nav-inner">
+            <div class="brand">NbDNS</div>
+            <div class="nav-right">
+                <span class="refresh-hint" id="last-update">加载中</span>
+                <span class="sep">·</span>
+                <span class="ver" id="version-display">v0.0.0</span>
+                <button id="check-update-btn" class="link-btn" title="检查更新">检查更新</button>
+                <button id="theme-toggle-btn" class="link-btn" title="切换主题">◐</button>
             </div>
-        </header>
+        </div>
+    </nav>
 
-        <div class="dashboard">
-            <!-- 运行时信息 -->
-            <section class="card">
-                <h2>运行时信息</h2>
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <span class="stat-label">运行时长</span>
-                        <span class="stat-value" id="uptime">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Goroutines</span>
-                        <span class="stat-value" id="goroutines">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">已分配内存</span>
-                        <span class="stat-value" id="mem-alloc">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">系统内存</span>
-                        <span class="stat-value" id="mem-sys">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">总分配内存</span>
-                        <span class="stat-value" id="mem-total">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">GC 次数</span>
-                        <span class="stat-value" id="num-gc">-</span>
-                    </div>
+    <main>
+        <section class="row">
+            <div class="panel">
+                <h3>运行状态</h3>
+                <dl class="kv">
+                    <div><dt>Uptime</dt><dd id="uptime">-</dd></div>
+                    <div><dt>Goroutines</dt><dd id="goroutines">-</dd></div>
+                    <div><dt>Alloc</dt><dd id="mem-alloc">-</dd></div>
+                    <div><dt>Sys</dt><dd id="mem-sys">-</dd></div>
+                    <div><dt>Total Alloc</dt><dd id="mem-total">-</dd></div>
+                    <div><dt>GC Runs</dt><dd id="num-gc">-</dd></div>
+                </dl>
+            </div>
+            <div class="panel">
+                <div class="panel-head">
+                    <h3>查询统计</h3>
+                    <span class="dim" id="stats-duration">-</span>
+                    <button id="reset-stats-btn" class="link-btn danger" title="重置统计数据">重置</button>
                 </div>
-            </section>
+                <dl class="kv">
+                    <div class="em"><dt>Total</dt><dd id="total-queries">-</dd></div>
+                    <div><dt>DoH</dt><dd id="doh-queries">-</dd></div>
+                    <div class="good"><dt>Cache Hit</dt><dd id="cache-hits">-</dd></div>
+                    <div><dt>Cache Miss</dt><dd id="cache-misses">-</dd></div>
+                    <div class="bad"><dt>Failed</dt><dd id="failed-queries">-</dd></div>
+                    <div class="em"><dt>Hit Rate</dt><dd id="hit-rate">-</dd></div>
+                </dl>
+            </div>
+        </section>
 
-            <!-- DNS 查询统计 -->
-            <section class="card">
-                <div class="card-header">
-                    <h2>DNS 查询统计</h2>
-                    <div class="stats-controls">
-                        <span class="stats-duration" id="stats-duration">统计时长: -</span>
-                        <button id="reset-stats-btn" class="reset-btn" title="重置统计数据">🔄 重置</button>
-                    </div>
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-item highlight">
-                        <span class="stat-label">总查询数</span>
-                        <span class="stat-value" id="total-queries">-</span>
-                    </div>
-                    <div class="stat-item info">
-                        <span class="stat-label">DoH 请求</span>
-                        <span class="stat-value" id="doh-queries">-</span>
-                    </div>
-                    <div class="stat-item success">
-                        <span class="stat-label">缓存命中</span>
-                        <span class="stat-value" id="cache-hits">-</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">缓存未命中</span>
-                        <span class="stat-value" id="cache-misses">-</span>
-                    </div>
-                    <div class="stat-item warning">
-                        <span class="stat-label">失败查询</span>
-                        <span class="stat-value" id="failed-queries">-</span>
-                    </div>
-                    <div class="stat-item highlight">
-                        <span class="stat-label">缓存命中率</span>
-                        <span class="stat-value" id="hit-rate">-</span>
-                    </div>
-                </div>
-            </section>
+        <section class="panel wide">
+            <h3>上游服务器</h3>
+            <div class="tbl-wrap">
+                <table id="upstream-table">
+                    <thead>
+                        <tr><th>地址</th><th>查询</th><th>错误</th><th>错误率</th><th class="hide-sm">最后使用</th></tr>
+                    </thead>
+                    <tbody id="upstream-tbody">
+                        <tr><td colspan="5" class="empty">暂无数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-            <!-- 上游服务器统计 -->
-            <section class="card full-width">
-                <h2>上游服务器统计</h2>
-                <div class="table-container">
-                    <table id="upstream-table">
-                        <thead>
-                            <tr>
-                                <th>服务器地址</th>
-                                <th>总查询数</th>
-                                <th>错误数</th>
-                                <th>错误率</th>
-                                <th>最后使用</th>
-                            </tr>
-                        </thead>
-                        <tbody id="upstream-tbody">
-                            <tr>
-                                <td colspan="5" class="no-data">暂无数据</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Top 客户端 IP -->
-            <section class="card">
-                <h2>Top 客户端 IP</h2>
-                <div class="table-container">
+        <section class="row">
+            <div class="panel">
+                <h3>Top 客户端</h3>
+                <div class="tbl-wrap">
                     <table id="top-clients-table">
                         <thead>
-                            <tr>
-                                <th>排名</th>
-                                <th>IP 地址</th>
-                                <th>查询次数</th>
-                            </tr>
+                            <tr><th class="w-rank">#</th><th>IP</th><th>次数</th></tr>
                         </thead>
                         <tbody id="top-clients-tbody">
-                            <tr>
-                                <td colspan="3" class="no-data">暂无数据</td>
-                            </tr>
+                            <tr><td colspan="3" class="empty">暂无数据</td></tr>
                         </tbody>
                     </table>
-                </div>
-            </section>
-
-            <!-- Top 查询域名 -->
-            <section class="card">
-                <h2>Top 查询域名</h2>
-                <div class="table-container">
-                    <table id="top-domains-table">
-                        <thead>
-                            <tr>
-                                <th>排名</th>
-                                <th>域名</th>
-                                <th>查询次数</th>
-                                <th>Top 客户端</th>
-                            </tr>
-                        </thead>
-                        <tbody id="top-domains-tbody">
-                            <tr>
-                                <td colspan="4" class="no-data">暂无数据</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-        </div>
-
-        <footer>
-            <div class="footer-content">
-                <span>NbDNS - 智能 DNS 服务器</span>
-                <div class="version-info">
-                    <span id="version-display">v0.0.0</span>
-                    <button id="check-update-btn" class="update-btn" title="检查更新">🔄</button>
                 </div>
             </div>
-        </footer>
-    </div>
+            <div class="panel">
+                <h3>Top 域名</h3>
+                <div class="tbl-wrap">
+                    <table id="top-domains-table">
+                        <thead>
+                            <tr><th class="w-rank">#</th><th>域名</th><th>次数</th><th>Top 客户端</th></tr>
+                        </thead>
+                        <tbody id="top-domains-tbody">
+                            <tr><td colspan="4" class="empty">暂无数据</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
 
-    <script src="app.js?v=1.2.0"></script>
+    <footer>NbDNS — 智能 DNS 中继</footer>
+
+    <script src="app.js?v=3.0.0"></script>
 </body>
-
 </html>
