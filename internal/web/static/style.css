@@ -123,6 +123,7 @@ main {
 .panel {
     background: var(--bg2);
     border: 1px solid var(--line);
+    min-width: 0;
     border-radius: 6px;
     padding: 20px;
 }
@@ -221,9 +222,6 @@ tbody tr:last-child td { border-bottom: none; }
 .rank-3 .rank-cell { color: #b87; }
 
 .domain-cell {
-    max-width: 260px;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
