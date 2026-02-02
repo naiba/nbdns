@@ -101,6 +101,17 @@ nav {
 }
 
 .link-btn:hover { color: var(--fg); border-color: var(--fg); }
+
+.theme-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 2px;
+    color: var(--fg2);
+}
+.theme-btn:hover { color: var(--fg); }
 .link-btn:disabled { opacity: .4; cursor: default; }
 .link-btn.danger { color: var(--bad); border-color: var(--bad); }
 .link-btn.danger:hover { opacity: .8; }
