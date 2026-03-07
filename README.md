@@ -2,23 +2,25 @@
 
 [![release](https://img.shields.io/github/v/release/naiba/nbdns?color=brightgreen&label=NbDNS&style=for-the-badge&logo=github)](https://github.com/naiba/nbdns/releases)
 
-:seal: 一个聪明的 DNS 中继器，可提升 DNS 解析准确性，自带管理面板，可替代 AdguardHome。
+:seal: A smart DNS relay that improves DNS resolution accuracy, with a built-in management dashboard. A lightweight alternative to AdGuard Home.
 
-![截图](./doc/screenshot.png)
+[中文说明](README_zh.md)
 
-## 快速开始
+![Screenshot](./doc/screenshot.png)
 
-1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新版本
-2. 下载 [china.txt](https://raw.githubusercontent.com/gaoyifan/china-operator-ip/refs/heads/ip-lists/china.txt) 并改名为 `china_ip_list.txt` 到 `data` 文件夹
+## Quick Start
+
+1. Download the latest release from [releases](https://github.com/naiba/nbdns/releases)
+2. Download [china.txt](https://raw.githubusercontent.com/gaoyifan/china-operator-ip/refs/heads/ip-lists/china.txt) and save it as `china_ip_list.txt` in the `data` folder
    ```shell
    wget https://raw.githubusercontent.com/gaoyifan/china-operator-ip/refs/heads/ip-lists/china.txt -O data/china_ip_list.txt
    ```
-3. 创建配置文件 `data/config.json`（参考下方配置示例）
-4. 启动 `./nbdns`
-5. 访问 `http://localhost:8854` 查看监控面板
+3. Create config file `data/config.json` (see example below)
+4. Run `./nbdns`
+5. Visit `http://localhost:8854` for the monitoring dashboard
 6. DNS TCP/UDP `127.0.0.1:8853`, DoH `http://localhost:8854/dns-query`
 
-**文件结构：**
+**Directory structure:**
 ```
 |- nbdns
 |- data
@@ -26,14 +28,14 @@
    |- china_ip_list.txt
 ```
 
-**测试命令：**
+**Test commands:**
 ```bash
 dig @127.0.0.1 -p 8853 www.baidu.com
 dig @127.0.0.1 -p 8853 www.google.com
 ```
-Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
+[dig](https://help.dyn.com/how-to-use-binds-dig-tool/) tool for Windows
 
-## 配置示例
+## Configuration Example
 
 ```json
 {
@@ -62,45 +64,45 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 }
 ```
 
-### 配置说明
+### Configuration Reference
 
-| 字段             | 说明                                                 | 默认值         |
-| ---------------- | ---------------------------------------------------- | -------------- |
-| `serve_addr`     | DNS 服务监听地址                                     | 必填           |
-| `web_addr`       | Web 面板和 DoH 服务端口                              | `0.0.0.0:8854` |
-| `strategy`       | 查询策略：1-最全结果，2-最快结果（推荐），3-任一结果 | `2`            |
-| `timeout`        | 上游超时时间（秒）                                   | `4`            |
-| `built_in_cache` | 启用内建缓存                                         | `false`        |
-| `socks_proxy`    | SOCKS5 代理地址                                      | 可选           |
-| `bootstrap`      | Bootstrap DNS 服务器（仅支持 IP）                    | 必填           |
-| `upstreams`      | 上游 DNS 列表                                        | 必填           |
-| `doh_server`     | DoH 服务配置                                         | 可选           |
-| `blacklist`      | 域名黑名单（强制使用非 primary DNS）                 | 可选           |
+| Field            | Description                                                         | Default        |
+| ---------------- | ------------------------------------------------------------------- | -------------- |
+| `serve_addr`     | DNS service listen address                                          | Required       |
+| `web_addr`       | Web dashboard and DoH service port                                  | `0.0.0.0:8854` |
+| `strategy`       | Query strategy: 1-most complete, 2-fastest (recommended), 3-any    | `2`            |
+| `timeout`        | Upstream timeout in seconds                                         | `4`            |
+| `built_in_cache` | Enable built-in cache                                               | `false`        |
+| `socks_proxy`    | SOCKS5 proxy address                                                | Optional       |
+| `bootstrap`      | Bootstrap DNS servers (IP only)                                     | Required       |
+| `upstreams`      | Upstream DNS list                                                   | Required       |
+| `doh_server`     | DoH server configuration                                           | Optional       |
+| `blacklist`      | Domain blacklist (force non-primary DNS)                            | Optional       |
 
-**上游 DNS 配置：**
-- `is_primary`: 标记国内 DNS
-- `use_socks`: 通过 SOCKS5 代理连接
-- `match`: 仅匹配特定域名后缀
+**Upstream DNS options:**
+- `is_primary`: Mark as domestic/primary DNS
+- `use_socks`: Connect through SOCKS5 proxy
+- `match`: Only match specific domain suffixes
 
-**域名匹配规则：**
-- `.` 匹配所有
-- `a.com` 仅匹配 a.com
-- `.a.com` 匹配 a.a.com, c.a.com, e.d.a.com 等
+**Domain matching rules:**
+- `.` matches all domains
+- `a.com` matches only a.com
+- `.a.com` matches a.a.com, c.a.com, e.d.a.com, etc.
 
-## 功能特性
+## Features
 
-### :chart_with_upwards_trend: Web 监控面板
-访问 `http://localhost:8854` 查看：
-- 运行时状态（运行时长、内存、Goroutines、GC）
-- DNS 查询统计（总查询数、缓存命中率、失败数）
-- 上游服务器状态（查询数、错误率、最后使用时间）
-- Top 客户端 IP 和查询域名排行
-- 统计数据重置功能
+### :chart_with_upwards_trend: Web Monitoring Dashboard
+Visit `http://localhost:8854` to view:
+- Runtime status (uptime, memory, goroutines, GC)
+- DNS query statistics (total queries, cache hit rate, failures)
+- Upstream server status (queries, error rate, last used)
+- Top client IPs and queried domains
+- Statistics reset
 
 ### :lock: DoH (DNS over HTTPS)
-DoH 服务与 Web 面板共用端口，访问路径：`/dns-query`
+DoH service shares the same port as the web dashboard, accessible at: `/dns-query`
 
-**配置示例：**
+**Configuration:**
 ```json
 {
   "doh_server": {
@@ -110,17 +112,17 @@ DoH 服务与 Web 面板共用端口，访问路径：`/dns-query`
 }
 ```
 
-**测试：**
+**Test:**
 ```bash
 curl -v -H "Accept: application/dns-message" \
   -u "user:password" \
   "http://localhost:8854/dns-query?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB"
 ```
 
-**浏览器配置（Firefox）：**
-设置 → 网络设置 → 启用基于 HTTPS 的 DNS → 自定义 → `http://your-server:8854/dns-query`
+**Browser setup (Firefox):**
+Settings → Network Settings → Enable DNS over HTTPS → Custom → `http://your-server:8854/dns-query`
 
-## 部署
+## Deployment
 
 ### :whale: Docker
 ```bash
@@ -131,8 +133,8 @@ docker run --name nbdns --restart always -d \
   ghcr.io/naiba/nbdns
 ```
 
-### :package: OpenWRT 自启动
-首先在 release 下载对应的二进制解压 zip 包后放置到 `/root`，然后 `chmod -R 777 /root/nbdns` 赋予执行权限，然后创建 `/etc/init.d/nbdns`：
+### :package: OpenWRT Auto-start
+Download the appropriate binary from releases, extract and place it in `/root`, then run `chmod -R 777 /root/nbdns` to grant permissions. Create `/etc/init.d/nbdns`:
 
 ```shell
 #!/bin/sh /etc/rc.common
@@ -166,4 +168,4 @@ start_service() {
 }
 ```
 
-赋予执行权限 `chmod +x /etc/init.d/nbdns` 然后启动服务 `/etc/init.d/nbdns enable && /etc/init.d/nbdns start`
+Grant execute permission: `chmod +x /etc/init.d/nbdns`, then enable and start: `/etc/init.d/nbdns enable && /etc/init.d/nbdns start`
