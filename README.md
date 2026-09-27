@@ -60,7 +60,9 @@ dig @127.0.0.1 -p 8853 www.google.com
     "username": "admin",
     "password": "secret"
   },
-  "blacklist": [".bing.com"]
+  "blacklist": [".bing.com"],
+  "filter_lists": ["ads.txt", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"],
+  "filter_update_interval_hours": 24
 }
 ```
 
@@ -72,12 +74,14 @@ dig @127.0.0.1 -p 8853 www.google.com
 | `web_addr`       | Web dashboard and DoH service port                                  | `0.0.0.0:8854` |
 | `strategy`       | Query strategy: 1-most complete, 2-fastest (recommended), 3-any    | `2`            |
 | `timeout`        | Upstream timeout in seconds                                         | `4`            |
-| `built_in_cache` | Enable built-in cache                                               | `false`        |
+| `built_in_cache` | Enable persistent Badger cache and in-memory hot cache              | `false`        |
 | `socks_proxy`    | SOCKS5 proxy address                                                | Optional       |
 | `bootstrap`      | Bootstrap DNS servers (IP only)                                     | Required       |
 | `upstreams`      | Upstream DNS list                                                   | Required       |
 | `doh_server`     | DoH server configuration                                           | Optional       |
 | `blacklist`      | Domain blacklist (force non-primary DNS)                            | Optional       |
+| `filter_lists`   | Local files or HTTPS subscription URLs (multiple supported)          | Optional       |
+| `filter_update_interval_hours` | Refresh interval in hours; `-1` disables periodic refresh | `24` |
 
 **Upstream DNS options:**
 - `is_primary`: Mark as domestic/primary DNS
@@ -89,18 +93,29 @@ dig @127.0.0.1 -p 8853 www.google.com
 - `a.com` matches only a.com
 - `.a.com` matches a.a.com, c.a.com, e.d.a.com, etc.
 
+### DNS blocklists
+
+`filter_lists` accepts a mixture of local files and HTTPS URLs, for example `"filter_lists": ["ads.txt", "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"]`. Relative paths are resolved against `data/`. At startup, local files and last-known-good downloaded copies are loaded without waiting for the network; subscriptions refresh in the background and then every 24 hours by default (local files are also reloaded). If the first download fails, DNS still starts but those remote rules remain inactive until fetched. Later failures retain the last verified list. Downloads are limited to 32 MiB and cannot use HTTP or redirect to HTTP. The dashboard and `/api/filters` show per-source update status, rule counts, and blocked queries. Lookups use an in-memory domain-label index; allow rules take precedence over block rules.
+
+Supported syntax: common AdGuard DNS rules `||example.com^` (including subdomains), exceptions `@@||safe.example.com^`, and hosts entries such as `0.0.0.0 example.com`, `127.0.0.1 example.com`, or `::1 example.com`. Lines beginning with `#` or `!` are comments. Wildcards, regular expressions, `$` modifiers, and the rest of the full AdGuard syntax are **not supported**; the number of skipped rules is logged at startup. Blocked names receive NXDOMAIN without querying upstream. DNS-only filtering cannot reliably remove YouTube ads served from video domains. The separate `blacklist` setting only changes upstream routing; it does **not** block domains.
+
+With `built_in_cache` enabled, frequently used DNS replies are served from a hot in-memory cache (at most 2,048 entries and approximately 8 MiB of response data); misses use the persistent Badger cache. These limits exclude Go object overhead, Badger, and subscription lists and are **not** a process RSS limit.
+
 ## Features
 
 ### :chart_with_upwards_trend: Web Monitoring Dashboard
 Visit `http://localhost:8854` to view:
 - Runtime status (uptime, memory, goroutines, GC)
 - DNS query statistics (total queries, cache hit rate, failures)
+- DNS subscription status (rule counts, refresh errors and blocked queries)
 - Upstream server status (queries, error rate, last used)
 - Top client IPs and queried domains
 - Statistics reset
 
 ### :lock: DoH (DNS over HTTPS)
 DoH service shares the same port as the web dashboard, accessible at: `/dns-query`
+
+The built-in listener uses plain HTTP. Put it behind an HTTPS reverse proxy and restrict dashboard access before using DoH or Basic Auth remotely. Both RFC 8484 GET and POST requests are supported.
 
 **Configuration:**
 ```json

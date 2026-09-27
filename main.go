@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"math/rand"
@@ -19,6 +20,7 @@ import (
 	"github.com/rhysd/go-github-selfupdate/selfupdate"
 	"github.com/yl2chen/cidranger"
 
+	"github.com/naiba/nbdns/internal/filter"
 	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/stats"
@@ -83,6 +85,20 @@ func main() {
 
 	// 只有 upstream handler 需要缓存
 	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
+	var filterManager *filter.Manager
+	if len(config.FilterLists) > 0 {
+		var err error
+		filterManager, err = filter.NewManager(dataPath, config.FilterLists, nil)
+		if err != nil {
+			panic(err)
+		}
+		if err := filterManager.LoadInitial(); err != nil {
+			log.Printf("过滤名单初始加载失败（将保留可用的缓存并后台重试）: %v", err)
+		}
+		upstreamHandler.SetFilter(filterManager)
+		snapshot := filterManager.Snapshot()
+		log.Printf("过滤名单已加载: %d 条规则, %d 条不支持的规则已跳过", snapshot.Rules, snapshot.Unsupported)
+	}
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	// Setup graceful shutdown
@@ -106,7 +122,7 @@ func main() {
 	log.Println("模式:", config.StrategyName())
 	log.Println("数据:", dataPath)
 	if config.BuiltInCache {
-		log.Println("启用 BadgerDB 缓存: 最大 40MB")
+		log.Println("启用 BadgerDB 持久缓存 + 有界内存热缓存（2048 条 / 约 8 MiB；非进程内存硬上限）")
 	} else {
 		log.Println("禁用缓存")
 	}
@@ -121,7 +137,23 @@ func main() {
 
 	// 注册监控面板路由
 	webHandler := web.NewHandler(statsRecorder, version, checkUpdateCh, debugLogger)
+	if filterManager != nil {
+		webHandler.SetFilterStatus(filterManager.Snapshot)
+	}
 	webHandler.RegisterRoutes(webServerHandler)
+	updateContext, cancelFilterUpdates := context.WithCancel(context.Background())
+	defer cancelFilterUpdates()
+	if filterManager != nil {
+		interval := time.Duration(config.FilterUpdateIntervalHours) * time.Hour
+		go filterManager.Run(updateContext, interval, func(err error) {
+			if err != nil {
+				log.Printf("过滤名单更新失败（继续使用缓存）: %v", err)
+			} else {
+				state := filterManager.Snapshot()
+				log.Printf("过滤名单更新成功: %d 条规则, %d 条不支持的规则", state.Rules, state.Unsupported)
+			}
+		})
+	}
 
 	// 如果启用 DoH，注册 DoH 路由
 	if config.DohServer != nil {

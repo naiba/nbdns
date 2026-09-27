@@ -2,6 +2,7 @@ package doh
 
 import (
 	"encoding/base64"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -40,20 +41,32 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	accept := r.Header.Get("Accept")
-	if accept != dohMediaType {
+	if accept := r.Header.Get("Accept"); accept != "" && !strings.Contains(accept, dohMediaType) && !strings.Contains(accept, "*/*") {
 		w.WriteHeader(http.StatusUnsupportedMediaType)
 		w.Write([]byte("unsupported media type: " + accept))
 		return
 	}
-
-	query := r.URL.Query().Get("dns")
-	if query == "" {
-		w.WriteHeader(http.StatusBadRequest)
+	var data []byte
+	var err error
+	switch r.Method {
+	case http.MethodGet:
+		query := r.URL.Query().Get("dns")
+		if query == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		data, err = base64.RawURLEncoding.DecodeString(query)
+	case http.MethodPost:
+		if r.Header.Get("Content-Type") != dohMediaType {
+			w.WriteHeader(http.StatusUnsupportedMediaType)
+			return
+		}
+		data, err = io.ReadAll(io.LimitReader(r.Body, 65536))
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
-	data, err := base64.RawURLEncoding.DecodeString(query)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(err.Error()))

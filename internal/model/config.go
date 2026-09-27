@@ -25,16 +25,18 @@ type DohServerConfig struct {
 }
 
 type Config struct {
-	ServeAddr    string           `json:"serve_addr,omitempty"`
-	WebAddr      string           `json:"web_addr,omitempty"`
-	DohServer    *DohServerConfig `json:"doh_server,omitempty"`
-	Strategy     int              `json:"strategy,omitempty"`
-	Timeout      int              `json:"timeout,omitempty"`
-	SocksProxy   string           `json:"socks_proxy,omitempty"`
-	BuiltInCache bool             `json:"built_in_cache,omitempty"`
-	Upstreams    []*Upstream      `json:"upstreams,omitempty"`
-	Bootstrap    []*Upstream      `json:"bootstrap,omitempty"`
-	Blacklist    []string         `json:"blacklist,omitempty"`
+	ServeAddr                 string           `json:"serve_addr,omitempty"`
+	WebAddr                   string           `json:"web_addr,omitempty"`
+	DohServer                 *DohServerConfig `json:"doh_server,omitempty"`
+	Strategy                  int              `json:"strategy,omitempty"`
+	Timeout                   int              `json:"timeout,omitempty"`
+	SocksProxy                string           `json:"socks_proxy,omitempty"`
+	BuiltInCache              bool             `json:"built_in_cache,omitempty"`
+	Upstreams                 []*Upstream      `json:"upstreams,omitempty"`
+	Bootstrap                 []*Upstream      `json:"bootstrap,omitempty"`
+	Blacklist                 []string         `json:"blacklist,omitempty"`
+	FilterLists               []string         `json:"filter_lists,omitempty"`                 // AdGuard DNS / hosts files, relative to data/
+	FilterUpdateIntervalHours int              `json:"filter_update_interval_hours,omitempty"` // Default 24; negative disables periodic updates
 
 	Debug     bool `json:"debug,omitempty"`
 	Profiling bool `json:"profiling,omitempty"`
@@ -69,6 +71,9 @@ func (c *Config) ReadInConfig(path string, ipRanger cidranger.Ranger, log logger
 	// Set default stats save interval (5 minutes)
 	if c.StatsSaveInterval == 0 {
 		c.StatsSaveInterval = 5
+	}
+	if c.FilterUpdateIntervalHours == 0 {
+		c.FilterUpdateIntervalHours = 24
 	}
 
 	for i := 0; i < len(c.Bootstrap); i++ {

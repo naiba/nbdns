@@ -199,6 +199,7 @@ h3 {
 .kv .bad dd { color: var(--bad); }
 
 .tbl-wrap { overflow-x: auto; }
+.kv + .tbl-wrap { margin-top: 14px; }
 
 table {
     width: 100%;
@@ -234,6 +235,11 @@ tbody tr:last-child td { border-bottom: none; }
 
 .domain-cell {
     white-space: nowrap;
+}
+
+.filter-source {
+    min-width: 200px;
+    overflow-wrap: anywhere;
 }
 
 .error-high { color: var(--bad); font-weight: 600; }

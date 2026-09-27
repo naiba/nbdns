@@ -66,6 +66,21 @@
             </div>
         </section>
 
+        <section class="panel wide">
+            <h3>DNS 拦截订阅</h3>
+            <dl class="kv">
+                <div class="em"><dt>已载入规则</dt><dd id="filter-rules">-</dd></div>
+                <div><dt>未支持规则</dt><dd id="filter-unsupported">-</dd></div>
+                <div class="good"><dt>本次运行拦截</dt><dd id="filter-blocked">-</dd></div>
+            </dl>
+            <div class="tbl-wrap">
+                <table>
+                    <thead><tr><th>来源</th><th>规则</th><th>未支持</th><th>状态</th><th>最近成功</th></tr></thead>
+                    <tbody id="filter-sources"><tr><td colspan="5" class="empty">暂无订阅</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+
         <section class="row">
             <div class="panel">
                 <h3>Top 客户端</h3>
@@ -98,6 +113,6 @@
 
     <footer>NbDNS — 智能 DNS 中继</footer>
 
-    <script src="app.js?v=3.0.0"></script>
+    <script src="app.js?v=3.1.0"></script>
 </body>
 </html>

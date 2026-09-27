@@ -11,6 +11,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/naiba/nbdns/internal/cache"
+	"github.com/naiba/nbdns/internal/filter"
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/logger"
@@ -20,9 +21,13 @@ type Handler struct {
 	strategy                          int
 	commonUpstreams, specialUpstreams []*model.Upstream
 	builtInCache                      cache.Cache
+	filter                            filter.Matcher
 	logger                            logger.Logger
 	stats                             stats.StatsRecorder
 }
+
+// SetFilter installs an immutable filter before the handler begins serving.
+func (h *Handler) SetFilter(f filter.Matcher) { h.filter = f }
 
 func NewHandler(strategy int, builtInCache bool,
 	upstreams []*model.Upstream,
@@ -32,13 +37,15 @@ func NewHandler(strategy int, builtInCache bool,
 	var c cache.Cache
 	if builtInCache {
 		var err error
-		c, err = cache.NewBadgerCache(dataPath, log)
+		var diskCache *cache.BadgerCache
+		diskCache, err = cache.NewBadgerCache(dataPath, log)
 		if err != nil {
 			log.Printf("Failed to initialize BadgerDB cache: %v", err)
 			log.Printf("Cache will be disabled")
 			c = nil
 		} else {
-			log.Printf("BadgerDB cache initialized successfully at %s", dataPath)
+			c = cache.NewMemoryCache(diskCache, 2048, 8<<20)
+			log.Printf("BadgerDB cache and 8 MiB / 2048-entry hot cache initialized at %s", dataPath)
 		}
 	}
 	var commonUpstreams, specialUpstreams []*model.Upstream
@@ -127,6 +134,9 @@ func (h *Handler) removeEDNS(req *dns.Msg) {
 func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	// 清理 EDNS 客户端子网信息
 	h.removeEDNS(req)
+	if len(h.matchedUpstreams(req)) == 0 {
+		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+	}
 
 	var msgs []*dns.Msg
 
@@ -139,28 +149,23 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 		msgs = h.getAnyResult(req)
 	}
 
-	var res *dns.Msg
-
-	for i := 0; i < len(msgs); i++ {
-		if msgs[i] == nil {
+	// DNS responses are indivisible: merging answers from different upstreams
+	// can mix incompatible RCODEs, CNAME chains, and DNSSEC signatures.
+	var best *dns.Msg
+	for _, msg := range msgs {
+		if msg == nil {
 			continue
 		}
-		if res == nil {
-			res = msgs[i]
-			continue
+		if best == nil || (msg.Rcode == dns.RcodeSuccess && best.Rcode != dns.RcodeSuccess) ||
+			(msg.Rcode == best.Rcode && len(msg.Answer) > 0 && len(best.Answer) == 0) ||
+			(h.strategy == model.StrategyFullest && msg.Rcode == best.Rcode && len(msg.Answer) > len(best.Answer)) {
+			best = msg
 		}
-		res.Answer = append(res.Answer, msgs[i].Answer...)
 	}
-
-	if res == nil {
-		// 如果全部上游挂了要返回错误
-		res = new(dns.Msg)
-		res.Rcode = dns.RcodeServerFailure
-	} else {
-		res.Answer = uniqueAnswer(res.Answer)
+	if best == nil {
+		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
-
-	return res
+	return best
 }
 
 func getDnsRequestCacheKey(m *dns.Msg) string {
@@ -178,20 +183,37 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 		// 	}
 		// }
 	}
-	return fmt.Sprintf("%s#%d#%s", model.GetDomainNameFromDnsMsg(m), m.Question[0].Qtype, dnssec)
+	return fmt.Sprintf("%s#%d#%d#%t#%s", strings.ToLower(model.GetDomainNameFromDnsMsg(m)), m.Question[0].Qtype, m.Question[0].Qclass, m.CheckingDisabled, dnssec)
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {
 	var ttl uint32
-	if len(m.Answer) > 0 {
+	if len(m.Answer) == 0 {
+		// RFC 2308: negative answers are cacheable only with an SOA.
+		for _, rr := range m.Ns {
+			if soa, ok := rr.(*dns.SOA); ok {
+				ttl = min(soa.Hdr.Ttl, soa.Minttl)
+				break
+			}
+		}
+	} else {
 		ttl = m.Answer[0].Header().Ttl
+		for _, rr := range m.Answer[1:] {
+			ttl = min(ttl, rr.Header().Ttl)
+		}
 	}
-	if ttl < 60 {
-		ttl = 60 // 最小 ttl 1 分钟
-	} else if ttl > 3600 {
-		ttl = 3600 // 最大 ttl 1 小时
+	lifetime := time.Duration(min(ttl, 3600)) * time.Second
+	for _, section := range [][]dns.RR{m.Answer, m.Ns, m.Extra} {
+		for _, rr := range section {
+			if sig, ok := rr.(*dns.RRSIG); ok {
+				remaining := time.Until(time.Unix(int64(sig.Expiration), 0))
+				if remaining < lifetime {
+					lifetime = remaining
+				}
+			}
+		}
 	}
-	return time.Duration(ttl) * time.Second
+	return max(lifetime, 0)
 }
 
 // shouldCacheResponse 判断响应是否应该被缓存
@@ -297,6 +319,9 @@ func validateResponse(req *dns.Msg, resp *dns.Msg, debugLogger logger.Logger) bo
 // HandleDnsMsg 处理 DNS 查询的核心逻辑（支持缓存和统计）
 // clientIP 和 domain 用于统计，如果为空则自动从请求中提取 domain
 func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
+	if req == nil {
+		return new(dns.Msg).SetRcodeFormatError(new(dns.Msg))
+	}
 	h.logger.Printf("nbdns::request %+v\n", req)
 
 	// 记录查询统计
@@ -313,6 +338,16 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 			h.stats.RecordClientQuery(clientIP, domain)
 		}
 	}
+	if req.Response || req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 {
+		return new(dns.Msg).SetRcodeFormatError(req)
+	}
+	if h.filter != nil && h.filter.Blocked(req.Question[0].Name) {
+		resp := new(dns.Msg).SetRcode(req, dns.RcodeNameError)
+		resp.RecursionAvailable = true
+		setResponseEDNS(req, resp)
+		return resp
+	}
+	h.removeEDNS(req)
 
 	// 检查缓存
 	var cacheKey string
@@ -326,9 +361,8 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 			respCache = v.Msg.Copy()
 			if v.Expires.After(time.Now()) {
 				msg := replyUpdateTtl(req, respCache, uint32(time.Until(v.Expires).Seconds()))
-				if len(msg.Answer) > 0 {
-					return msg
-				}
+				setResponseEDNS(req, msg)
+				return msg
 			}
 		} else {
 			if h.stats != nil {
@@ -347,28 +381,63 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 		// 上游失败时使用任何可用缓存（即使过期）作为降级
 		if respCache != nil {
 			msg := replyUpdateTtl(req, respCache, 12)
-			if len(msg.Answer) > 0 {
+			if len(msg.Answer) > 0 && !req.CheckingDisabled && (req.IsEdns0() == nil || !req.IsEdns0().Do()) {
+				msg.AuthenticatedData = false
+				setResponseEDNS(req, msg)
 				return msg
 			}
 		}
 	}
+	if len(resp.Answer) == 0 && (resp.Rcode == dns.RcodeNameError || resp.Rcode == dns.RcodeSuccess) {
+		for _, rr := range resp.Ns {
+			if soa, ok := rr.(*dns.SOA); ok {
+				soa.Hdr.Ttl = min(soa.Hdr.Ttl, soa.Minttl)
+			}
+		}
+	}
 
-	resp.SetReply(req)
+	restoreReplyMeta(req, resp)
 	h.logger.Printf("nbdns::resp: %+v\n", resp)
 
 	// 验证响应并缓存（防止缓存投毒）
 	if h.builtInCache != nil && shouldCacheResponse(resp) && validateResponse(req, resp, h.logger) {
-		ttl := getDnsResponseTtl(resp)
-		cachedMsg := &cache.CachedMsg{
-			Msg:     resp,
-			Expires: time.Now().Add(ttl),
-		}
-		if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl+time.Hour); err != nil {
-			h.logger.Printf("Failed to cache response: %v", err)
+		if ttl := getDnsResponseTtl(resp); ttl > 0 {
+			cachedMsg := &cache.CachedMsg{Msg: resp.Copy(), Expires: time.Now().Add(ttl)}
+			if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl+time.Hour); err != nil {
+				h.logger.Printf("Failed to cache response: %v", err)
+			}
 		}
 	}
-
+	setResponseEDNS(req, resp)
 	return resp
+}
+
+func restoreReplyMeta(req, resp *dns.Msg) {
+	resp.Id = req.Id
+	resp.Response = true
+	resp.RecursionDesired = req.RecursionDesired
+	resp.CheckingDisabled = req.CheckingDisabled
+	resp.Question = []dns.Question{req.Question[0]}
+}
+
+func setResponseEDNS(req, resp *dns.Msg) {
+	// OPT is transaction metadata (RFC 6891); do not reuse an upstream OPT.
+	var extras []dns.RR
+	for _, rr := range resp.Extra {
+		if rr.Header().Rrtype != dns.TypeOPT {
+			extras = append(extras, rr)
+		}
+	}
+	resp.Extra = extras
+	if opt := req.IsEdns0(); opt != nil {
+		resp.SetEdns0(min(opt.UDPSize(), 1232), opt.Do())
+	}
+}
+
+func validUpstreamReply(req, resp *dns.Msg) bool {
+	return resp != nil && resp.Response && resp.Id == req.Id && resp.Opcode == req.Opcode &&
+		len(resp.Question) == 1 && strings.EqualFold(resp.Question[0].Name, req.Question[0].Name) &&
+		resp.Question[0].Qtype == req.Question[0].Qtype && resp.Question[0].Qclass == req.Question[0].Qclass
 }
 
 // extractClientIPFromDNS 从 DNS 请求中提取客户端 IP
@@ -410,11 +479,22 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 
 	// 调用核心处理逻辑
 	resp := h.HandleDnsMsg(req, clientIP, domain)
+	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
+		truncateUDP(req, resp)
+	}
 
 	// 写入响应
 	if err := w.WriteMsg(resp); err != nil {
 		h.logger.Printf("WriteMsg error: %+v", err)
 	}
+}
+
+func truncateUDP(req, resp *dns.Msg) {
+	size := dns.MinMsgSize
+	if opt := req.IsEdns0(); opt != nil {
+		size = min(int(opt.UDPSize()), 1232)
+	}
+	resp.Truncate(size)
 }
 
 // uniqueAnswer 去除重复的 DNS 资源记录
@@ -525,7 +605,7 @@ func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
 				h.logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
 				return
 			}
-			if matchedUpstreams[j].IsValidMsg(msg) {
+			if validUpstreamReply(req, msg) && matchedUpstreams[j].IsValidMsg(msg) {
 				msgs[j] = msg
 			}
 		}(i)
@@ -569,7 +649,7 @@ func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
 				return
 			}
 
-			if err == nil {
+			if err == nil && validUpstreamReply(req, msg) {
 				if preferUpstreams[j].IsValidMsg(msg) {
 					if preferUpstreams[j].IsPrimary {
 						primaryIndex = append(primaryIndex, j)
@@ -640,9 +720,11 @@ func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
 			}
 
 			// 已结束或任意上游返回成功时退出
-			if err == nil || finishedCount == len(matchedUpstreams) {
+			if (err == nil && validUpstreamReply(req, msg)) || finishedCount == len(matchedUpstreams) {
 				finished = true
-				msgs[j] = msg
+				if err == nil && validUpstreamReply(req, msg) {
+					msgs[j] = msg
+				}
 				wg.Done()
 			}
 		}(i)
@@ -695,7 +777,7 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 			}
 
 			// 更新 TTL（最低为 0）
-			header.Ttl = ttl
+			header.Ttl = min(header.Ttl, ttl)
 			validRRs = append(validRRs, rr)
 		}
 		return validRRs
@@ -738,13 +820,14 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 						continue // 跳过过期的 RRSIG
 					}
 				}
-				header.Ttl = ttl
+				header.Ttl = min(header.Ttl, ttl)
 			}
 			validExtra = append(validExtra, rr)
 		}
 	}
 	resp.Extra = validExtra
 
-	// SetReply 会设置正确的 Message ID 和其他响应标志
-	return resp.SetReply(req)
+	// SetReply resets RCODE to NOERROR; preserve the cached response.
+	restoreReplyMeta(req, resp)
+	return resp
 }

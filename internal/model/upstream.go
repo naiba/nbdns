@@ -178,6 +178,14 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 }
 
 func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
+	if r == nil {
+		return false
+	}
+	// An empty Answer is normal for NXDOMAIN/NODATA. Geography checks only
+	// apply when the response actually contains addresses.
+	if r.Rcode == dns.RcodeNameError || (r.Rcode == dns.RcodeSuccess && len(r.Answer) == 0 && len(r.Ns) > 0) {
+		return true
+	}
 	domain := GetDomainNameFromDnsMsg(r)
 	inBlacklist := utils.HasMatchedRule(up.config.BlacklistSplited, domain)
 	for i := 0; i < len(r.Answer); i++ {
@@ -241,6 +249,13 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		client := new(dns.Client)
 		client.Timeout = time.Second * time.Duration(up.config.Timeout)
 		resp, duration, err = client.Exchange(req, up.hostAndPort)
+		if err == nil && resp != nil && resp.Truncated {
+			// RFC 7766: retry a truncated UDP response over TCP.
+			tcpClient := &dns.Client{Net: "tcp", Timeout: client.Timeout}
+			var tcpRTT time.Duration
+			resp, tcpRTT, err = tcpClient.Exchange(req, up.hostAndPort)
+			duration += tcpRTT
+		}
 	case "tcp", "tcp-tls":
 		conn, errGetConn := up.pool.Get(up.protocol, up.hostAndPort)
 		if errGetConn != nil {

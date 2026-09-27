@@ -47,11 +47,14 @@
             "address": "https://dns.google/dns-query",
             "use_socks": false,
             "match": [
-                ".*\\.onion"
+                ".onion"
             ]
         }
     ],
     "blacklist": [
-        "^.*\\.?bing.com*"
-    ]
+        "bing.com",
+        ".bing.com"
+    ],
+    "filter_lists": [],
+    "filter_update_interval_hours": 24
 }

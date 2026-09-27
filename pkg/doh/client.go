@@ -89,7 +89,7 @@ func NewClient(opts ...ClientOption) *Client {
 		},
 	}
 
-	var transport *http.Transport
+	var transport http.RoundTripper = http.DefaultTransport
 
 	if o.bootstrap != nil {
 		transport = &http.Transport{

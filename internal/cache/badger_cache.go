@@ -38,7 +38,7 @@ func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 
 	opts := badger.DefaultOptions(dbPath)
 
-	// 针对树莓派等嵌入式设备的优化配置（目标：总内存 ~32MB）
+	// 针对嵌入式设备的配置；以下仅为 Badger 各组件容量，并非进程 RSS 上限。
 	// MemTable：4MB，BadgerDB 默认保持 2 个 MemTable
 	opts.MemTableSize = 4 << 20 // 4MB (内存占用 ~8MB)
 

@@ -65,6 +65,35 @@ function updateUpstream(list) {
     }).join('');
 }
 
+function updateFilters(data) {
+    document.getElementById('filter-rules').textContent = fmt(data.rules || 0);
+    document.getElementById('filter-unsupported').textContent = fmt(data.unsupported || 0);
+    document.getElementById('filter-blocked').textContent = fmt(data.blocked_queries || 0);
+    var tbody = document.getElementById('filter-sources');
+    tbody.replaceChildren();
+    if (!data.sources || !data.sources.length) {
+        var empty = document.createElement('tr');
+        var cell = document.createElement('td');
+        cell.colSpan = 5; cell.className = 'empty'; cell.textContent = '暂无订阅';
+        empty.appendChild(cell); tbody.appendChild(empty); return;
+    }
+    data.sources.forEach(function(source) {
+        var row = document.createElement('tr');
+        var state = source.last_error ? (source.from_cache ? '更新失败 · 使用缓存' : '更新失败')
+            : source.from_cache ? '使用缓存' : source.last_success && source.last_success !== '0001-01-01T00:00:00Z' ? '正常' : '等待首次下载';
+        var fields = [source.source || '-', fmt(source.rules || 0), fmt(source.unsupported || 0), state,
+            source.last_success && source.last_success !== '0001-01-01T00:00:00Z' ? new Date(source.last_success).toLocaleString() : '-'];
+        fields.forEach(function(value, i) {
+            var cell = document.createElement('td');
+            cell.textContent = value;
+            if (i === 0) cell.className = 'filter-source';
+            if (i === 3 && source.last_error) { cell.className = 'error-high'; cell.title = source.last_error; }
+            row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+    });
+}
+
 function updateTopClients(list) {
     var tb = document.getElementById('top-clients-tbody');
     if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">暂无数据</td></tr>'; return; }
@@ -107,6 +136,8 @@ async function load() {
         updateUpstream(d.upstreams);
         updateTopClients(d.top_clients);
         updateTopDomains(d.top_domains);
+		var filters = await fetch('/api/filters');
+		if (filters.ok) updateFilters(await filters.json());
         resetCD();
     } catch(e) {
         document.getElementById('last-update').textContent = '失败';

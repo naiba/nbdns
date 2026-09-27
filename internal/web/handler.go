@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/naiba/nbdns/internal/filter"
 	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/logger"
 )
@@ -19,6 +20,11 @@ type Handler struct {
 	version       string
 	checkUpdateCh chan<- struct{}
 	logger        logger.Logger
+	filterStatus  func() filter.Snapshot
+}
+
+func (h *Handler) SetFilterStatus(snapshot func() filter.Snapshot) {
+	h.filterStatus = snapshot
 }
 
 // NewHandler 创建Web处理器
@@ -35,6 +41,7 @@ func NewHandler(s stats.StatsRecorder, ver string, checkCh chan<- struct{}, log 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// API路由
 	mux.HandleFunc("/api/stats", h.handleStats)
+	mux.HandleFunc("/api/filters", h.handleFilters)
 	mux.HandleFunc("/api/stats/reset", h.handleStatsReset)
 	mux.HandleFunc("/api/version", h.handleVersion)
 	mux.HandleFunc("/api/check-update", h.handleCheckUpdate)
@@ -46,6 +53,20 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+}
+
+func (h *Handler) handleFilters(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	snapshot := filter.Snapshot{Sources: []filter.SourceStatus{}}
+	if h.filterStatus != nil {
+		snapshot = h.filterStatus()
+	}
+	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
 // handleStats 处理统计信息请求

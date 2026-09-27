@@ -2,11 +2,54 @@ package model
 
 import (
 	"index/suffixarray"
+	"net"
 	"strings"
 	"testing"
 
+	"github.com/miekg/dns"
+	"github.com/naiba/nbdns/pkg/logger"
 	"github.com/naiba/nbdns/pkg/utils"
+	"github.com/yl2chen/cidranger"
 )
+
+func TestUDPTruncationRetriesOverTCP(t *testing.T) {
+	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpConn, err := net.Listen("tcp", udpConn.LocalAddr().String())
+	if err != nil {
+		_ = udpConn.Close()
+		t.Fatal(err)
+	}
+	udp := &dns.Server{PacketConn: udpConn, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg).SetReply(req)
+		resp.Truncated = true
+		_ = w.WriteMsg(resp)
+	})}
+	tcp := &dns.Server{Listener: tcpConn, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg).SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{
+			Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 30},
+			A:   net.IPv4(192, 0, 2, 1),
+		}}
+		_ = w.WriteMsg(resp)
+	})}
+	go func() { _ = udp.ActivateAndServe() }()
+	go func() { _ = tcp.ActivateAndServe() }()
+	t.Cleanup(func() { _ = udp.Shutdown(); _ = tcp.Shutdown() })
+	up := &Upstream{Address: "udp://" + udpConn.LocalAddr().String()}
+	up.Init(&Config{Timeout: 2}, cidranger.NewPCTrieRanger(), logger.New(false))
+	query := new(dns.Msg)
+	query.SetQuestion("example.org.", dns.TypeA)
+	resp, _, err := up.Exchange(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Truncated || len(resp.Answer) != 1 {
+		t.Errorf("did not retry truncated UDP answer via TCP: %+v", resp)
+	}
+}
 
 var primaryLocations = []string{"中国", "省", "市", "自治区"}
 var nonPrimaryLocations = []string{"台湾", "香港", "澳门"}
