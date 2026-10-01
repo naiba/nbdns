@@ -95,19 +95,25 @@ function updateFilters(data) {
 }
 
 function updateTopClients(list) {
-    var tb = document.getElementById('top-clients-tbody');
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">暂无数据</td></tr>'; return; }
-    tb.replaceChildren();
+    var leaderboard = document.getElementById('top-clients-list');
+    leaderboard.replaceChildren();
+    if (!list || !list.length) {
+        var empty = document.createElement('p');
+        empty.className = 'client-leaderboard-empty'; empty.textContent = '暂无数据';
+        leaderboard.appendChild(empty); return;
+    }
     list.slice(0, 10).forEach(function(c, i) {
-        var row = document.createElement('tr');
-        if (i < 3) row.className = 'rank-' + (i + 1);
-        var rank = document.createElement('td');
-        rank.className = 'rank-cell'; rank.textContent = i + 1;
-        var client = document.createElement('td');
+        var item = document.createElement('article');
+        item.className = 'client-rank-item' + (i < 3 ? ' rank-' + (i + 1) : '');
+        item.setAttribute('role', 'listitem');
+        var rank = document.createElement('span');
+        rank.className = 'client-rank-number'; rank.textContent = String(i + 1).padStart(2, '0');
+        var client = document.createElement('span');
         client.className = 'client-address'; client.textContent = c.key || '-'; client.title = c.key || '';
-        var count = document.createElement('td');
-        count.className = 'number-cell'; count.textContent = fmt(c.count || 0);
-        row.append(rank, client, count); tb.appendChild(row);
+        var metric = document.createElement('span'); metric.className = 'client-rank-metric';
+        var count = document.createElement('strong'); count.textContent = fmt(c.count || 0);
+        var unit = document.createElement('small'); unit.textContent = '请求';
+        metric.append(count, unit); item.append(rank, client, metric); leaderboard.appendChild(item);
     });
 }
 

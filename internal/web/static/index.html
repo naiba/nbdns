@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <title>NbDNS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=3.2.0">
+    <link rel="stylesheet" href="style.css?v=3.2.1">
 </head>
 <body>
     <nav>
@@ -83,7 +83,7 @@
 
         <section class="rankings-grid" aria-labelledby="rankings-title">
             <h2 id="rankings-title" class="sr-only">请求排行</h2>
-            <div class="panel">
+            <div class="panel client-ranking-panel">
                 <div class="panel-head ranking-head">
                     <div>
                         <h3>客户端排行</h3>
@@ -91,15 +91,8 @@
                     </div>
                     <span class="ranking-badge">Top 10</span>
                 </div>
-                <div class="tbl-wrap">
-                    <table id="top-clients-table">
-                        <thead>
-                            <tr><th class="w-rank">#</th><th>IP</th><th>次数</th></tr>
-                        </thead>
-                        <tbody id="top-clients-tbody">
-                            <tr><td colspan="3" class="empty">暂无数据</td></tr>
-                        </tbody>
-                    </table>
+                <div id="top-clients-list" class="client-leaderboard" role="list" aria-live="polite">
+                    <p class="client-leaderboard-empty">暂无数据</p>
                 </div>
             </div>
             <div class="panel domain-ranking-panel resolved-ranking">
@@ -145,6 +138,6 @@
 
     <footer>NbDNS — 智能 DNS 中继</footer>
 
-    <script src="app.js?v=3.2.0"></script>
+    <script src="app.js?v=3.2.1"></script>
 </body>
 </html>

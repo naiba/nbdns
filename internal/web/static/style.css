@@ -133,10 +133,12 @@ main {
 
 .rankings-grid {
     display: grid;
-    grid-template-columns: minmax(220px, .72fr) repeat(2, minmax(0, 1.14fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 20px;
     align-items: start;
 }
+
+.client-ranking-panel { grid-column: 1 / -1; }
 
 .panel {
     background: var(--bg2);
@@ -279,8 +281,6 @@ td {
     font-family: "SF Mono", Menlo, Consolas, monospace;
 }
 
-#top-clients-table th:last-child { text-align: right; }
-
 tbody tr:last-child td { border-bottom: none; }
 
 .w-rank { width: 36px; text-align: center; }
@@ -297,16 +297,76 @@ tbody tr:last-child td { border-bottom: none; }
     white-space: nowrap;
 }
 
+.domain-ranking-panel table { table-layout: fixed; }
+.domain-ranking-panel th:nth-child(3) { width: 64px; text-align: right; }
+.domain-ranking-panel th:nth-child(4) { width: 180px; }
+
+.client-leaderboard {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(5, minmax(48px, auto));
+    grid-auto-flow: column;
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--line);
+}
+
+.client-rank-item {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 8px 12px;
+    background: var(--bg);
+}
+
+.client-rank-item:hover { background: var(--bg2); }
+
+.client-rank-number {
+    color: var(--fg3);
+    font: 600 11px/1 "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: .5px;
+}
+
+.client-rank-item.rank-1 .client-rank-number { color: #e8a320; }
+.client-rank-item.rank-2 .client-rank-number { color: #8a9; }
+.client-rank-item.rank-3 .client-rank-number { color: #b87; }
+
 .client-address {
-    max-width: 190px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
 }
 
-.domain-ranking-panel table { table-layout: fixed; }
-.domain-ranking-panel th:nth-child(3) { width: 64px; text-align: right; }
-.domain-ranking-panel th:nth-child(4) { width: 150px; }
+.client-rank-metric {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.client-rank-metric strong {
+    color: var(--fg);
+    font: 600 13px/1 "SF Mono", Menlo, Consolas, monospace;
+}
+
+.client-rank-metric small { color: var(--fg3); font-size: 10px; }
+
+.client-leaderboard-empty {
+    grid-column: 1 / -1;
+    display: grid;
+    place-items: center;
+    min-height: 80px;
+    padding: 20px;
+    background: var(--bg);
+    color: var(--fg3);
+}
 
 .client-breakdown-cell { vertical-align: top; }
 
@@ -421,14 +481,9 @@ footer {
     color: var(--fg3);
 }
 
-@media (max-width: 1000px) {
-    .rankings-grid { grid-template-columns: 1fr 1fr; }
-    .rankings-grid > .panel:first-of-type { grid-column: 1 / -1; }
-}
-
-@media (max-width: 760px) {
+@media (max-width: 880px) {
     .rankings-grid { grid-template-columns: 1fr; gap: 16px; }
-    .rankings-grid > .panel:first-of-type { grid-column: auto; }
+    .client-ranking-panel { grid-column: auto; }
 }
 
 @media (max-width: 640px) {
@@ -439,6 +494,66 @@ footer {
     .kv dd { font-size: 15px; }
     .nav-inner { padding: 0 16px; }
     .hide-sm { display: none; }
-    .domain-ranking-panel th:nth-child(4) { width: 132px; }
-    .domain-cell { max-width: 130px; }
+    .client-leaderboard {
+        grid-template-columns: 1fr;
+        grid-template-rows: none;
+        grid-auto-flow: row;
+    }
+    .domain-ranking-panel .tbl-wrap { overflow: visible; }
+    .domain-ranking-panel table { table-layout: auto; }
+    .domain-ranking-panel thead { display: none; }
+    .domain-ranking-panel tbody { display: grid; gap: 8px; }
+    .domain-ranking-panel tbody tr {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        grid-template-rows: auto auto;
+        align-items: center;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--bg);
+    }
+    .domain-ranking-panel tbody td { border-bottom: 0; }
+    .domain-ranking-panel .rank-cell {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        padding: 12px 6px;
+    }
+    .domain-ranking-panel .domain-cell {
+        grid-column: 2;
+        grid-row: 1;
+        max-width: none;
+        padding: 10px 8px;
+    }
+    .domain-ranking-panel .number-cell {
+        grid-column: 3;
+        grid-row: 1;
+        padding: 10px 10px 10px 4px;
+    }
+    .domain-ranking-panel .number-cell::after {
+        content: " 次";
+        color: var(--fg3);
+        font-family: -apple-system, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: 10px;
+        font-weight: 400;
+    }
+    .domain-ranking-panel .client-breakdown-cell {
+        grid-column: 2 / 4;
+        grid-row: 2;
+        display: grid;
+        grid-template-columns: 48px minmax(0, 1fr);
+        gap: 8px;
+        padding: 8px 10px 8px 8px;
+        border-top: 1px solid var(--line);
+    }
+    .domain-ranking-panel .client-breakdown-cell::before {
+        content: "客户端";
+        color: var(--fg3);
+        font-size: 10px;
+    }
+    .domain-ranking-panel .empty {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        padding: 24px 12px;
+    }
 }
