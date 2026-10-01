@@ -166,6 +166,12 @@ main {
 
 .ranking-head > div { min-width: 0; }
 
+.ranking-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .panel-subtitle {
     margin-top: 3px;
     color: var(--fg3);
@@ -183,6 +189,23 @@ main {
     font: 10px/1.4 "SF Mono", Menlo, Consolas, monospace;
     letter-spacing: .2px;
 }
+
+.ranking-expand-btn {
+    min-width: 58px;
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg2);
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.ranking-expand-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--fg3); }
+.ranking-expand-btn:focus-visible { outline: 2px solid var(--em); outline-offset: 2px; }
+.ranking-expand-btn:disabled { opacity: .4; cursor: default; }
 
 .domain-ranking-panel { border-top-width: 3px; }
 .resolved-ranking { border-top-color: var(--good); }
@@ -300,6 +323,26 @@ tbody tr:last-child td { border-bottom: none; }
 .domain-ranking-panel table { table-layout: fixed; }
 .domain-ranking-panel th:nth-child(3) { width: 64px; text-align: right; }
 .domain-ranking-panel th:nth-child(4) { width: 180px; }
+
+.domain-list-scroll {
+    max-height: min(62vh, 620px);
+    overflow: auto;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+}
+
+.domain-list-scroll.expanded { max-height: none; overflow: visible; }
+
+.domain-list-scroll th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg2);
+    box-shadow: 0 1px 0 var(--line);
+}
+
+.domain-list-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.domain-list-scroll::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: var(--fg3); background-clip: padding-box; }
 
 .client-leaderboard {
     display: grid;
@@ -494,12 +537,15 @@ footer {
     .kv dd { font-size: 15px; }
     .nav-inner { padding: 0 16px; }
     .hide-sm { display: none; }
+    .domain-ranking-panel .ranking-head { flex-wrap: wrap; }
+    .domain-ranking-panel .ranking-head-actions { width: 100%; justify-content: space-between; }
     .client-leaderboard {
         grid-template-columns: 1fr;
         grid-template-rows: none;
         grid-auto-flow: row;
     }
-    .domain-ranking-panel .tbl-wrap { overflow: visible; }
+    .domain-ranking-panel .tbl-wrap { max-height: min(70vh, 620px); overflow: auto; }
+    .domain-ranking-panel .domain-list-scroll.expanded { max-height: none; overflow: visible; }
     .domain-ranking-panel table { table-layout: auto; }
     .domain-ranking-panel thead { display: none; }
     .domain-ranking-panel tbody { display: grid; gap: 8px; }

@@ -160,6 +160,8 @@ function makeClientBreakdown(domain, wasOpen) {
 
 function updateDomainRanking(list, tbodyId, emptyText) {
     var tb = document.getElementById(tbodyId);
+    var viewport = tb.closest('.domain-list-scroll');
+    var previousScrollTop = viewport ? viewport.scrollTop : 0;
     var openDomains = {};
     Array.prototype.forEach.call(tb.querySelectorAll('tr[data-domain]'), function(row) {
         var details = row.querySelector('details[open]');
@@ -170,9 +172,16 @@ function updateDomainRanking(list, tbodyId, emptyText) {
         var emptyRow = document.createElement('tr');
         var emptyCell = document.createElement('td');
         emptyCell.colSpan = 4; emptyCell.className = 'empty'; emptyCell.textContent = emptyText;
-        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow); return;
+        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow);
+        if (viewport) {
+            viewport.classList.remove('expanded'); viewport.scrollTop = 0;
+            var emptyButton = document.querySelector('[data-target="' + viewport.id + '"]');
+            syncRankingExpandButton(emptyButton, viewport);
+            if (emptyButton) emptyButton.disabled = true;
+        }
+        return;
     }
-    list.slice(0, 10).forEach(function(domain, i) {
+    list.slice(0, 50).forEach(function(domain, i) {
         var row = document.createElement('tr');
         var domainName = domain.key || '-';
         row.setAttribute('data-domain', domainName);
@@ -183,6 +192,31 @@ function updateDomainRanking(list, tbodyId, emptyText) {
         var clients = document.createElement('td'); clients.className = 'client-breakdown-cell';
         clients.appendChild(makeClientBreakdown(domain, !!openDomains[domainName]));
         row.append(rank, name, requests, clients); tb.appendChild(row);
+    });
+    if (viewport) {
+        viewport.scrollTop = previousScrollTop;
+        syncRankingExpandButton(document.querySelector('[data-target="' + viewport.id + '"]'), viewport);
+    }
+}
+
+function syncRankingExpandButton(button, target) {
+    if (!button || !target) return;
+    var expanded = target.classList.contains('expanded');
+    button.textContent = expanded ? '收起列表' : '展开全部';
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    button.disabled = !expanded && target.scrollHeight <= target.clientHeight + 1;
+}
+
+function initRankingExpanders() {
+    document.querySelectorAll('.ranking-expand-btn').forEach(function(button) {
+        var target = document.getElementById(button.getAttribute('data-target'));
+        if (!target) return;
+        button.addEventListener('click', function() {
+            target.classList.toggle('expanded');
+            syncRankingExpandButton(button, target);
+            if (!target.classList.contains('expanded')) target.scrollIntoView({ block: 'nearest' });
+        });
+        syncRankingExpandButton(button, target);
     });
 }
 
@@ -265,6 +299,7 @@ async function resetStats() {
 
 document.addEventListener('DOMContentLoaded', function() {
     initTheme();
+    initRankingExpanders();
     load(); loadVer(); start();
     document.getElementById('theme-toggle-btn').addEventListener('click', toggleTheme);
     document.getElementById('check-update-btn').addEventListener('click', checkUpdate);

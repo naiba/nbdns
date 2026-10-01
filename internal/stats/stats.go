@@ -15,6 +15,11 @@ import (
 // 避免普通流量波动频繁淘汰候选，同时阻止伪造大量客户端地址造成内存无限增长。
 const maxClientsPerDomain = 64
 
+const (
+	topClientLimit = 10
+	topDomainLimit = 50
+)
+
 // StatsRecorder 定义统计接口
 type StatsRecorder interface {
 	RecordQuery()
@@ -313,7 +318,7 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 
 	// Top N 客户端 IP
 	topClients := make([]TopNItemJSON, 0)
-	for _, item := range s.topClients.GetTopN(10) {
+	for _, item := range s.topClients.GetTopN(topClientLimit) {
 		topClients = append(topClients, TopNItemJSON{
 			Key:   item.Key,
 			Count: item.Count,
@@ -321,8 +326,8 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 	}
 
 	// Top N 已解析及被拦截域名，每个域名附带客户端 Top 10。
-	topDomains := topDomainItems(s.topDomains, 10)
-	topBlockedDomains := topDomainItems(s.topBlockedDomains, 10)
+	topDomains := topDomainItems(s.topDomains, topDomainLimit)
+	topBlockedDomains := topDomainItems(s.topBlockedDomains, topDomainLimit)
 
 	return StatsSnapshot{
 		Runtime:           runtimeStats,
@@ -335,8 +340,27 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 }
 
 func topDomainItems(tracker *TopNTracker, n int) []TopNItemJSON {
-	result := make([]TopNItemJSON, 0)
-	for _, item := range tracker.GetTopN(n) {
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+
+	// 只复制候选指针，直接为最终入榜项生成客户端 Top 10，避免先深拷贝
+	// 每个域名的完整客户端 map。
+	candidates := make([]*TopNItem, 0, len(tracker.items))
+	for _, item := range tracker.items {
+		candidates = append(candidates, item)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Count == candidates[j].Count {
+			return candidates[i].Key < candidates[j].Key
+		}
+		return candidates[i].Count > candidates[j].Count
+	})
+	if n > len(candidates) {
+		n = len(candidates)
+	}
+
+	result := make([]TopNItemJSON, 0, n)
+	for _, item := range candidates[:n] {
 		clients := make([]ClientCountJSON, 0, len(item.clients))
 		for client, count := range item.clients {
 			clients = append(clients, ClientCountJSON{Client: client, Count: count})
@@ -347,8 +371,8 @@ func topDomainItems(tracker *TopNTracker, n int) []TopNItemJSON {
 			}
 			return clients[i].Count > clients[j].Count
 		})
-		if len(clients) > 10 {
-			clients = clients[:10]
+		if len(clients) > topClientLimit {
+			clients = clients[:topClientLimit]
 		}
 		entry := TopNItemJSON{Key: item.Key, Count: item.Count, TopClients: clients}
 		if len(clients) > 0 {

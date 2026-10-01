@@ -38,10 +38,10 @@ func TestDomainRankingsSeparateResolvedAndBlockedClients(t *testing.T) {
 	}
 }
 
-func TestDomainRankingsPersistAndReturnTopTen(t *testing.T) {
+func TestDomainRankingsPersistAndReturnTopFifty(t *testing.T) {
 	s := NewStats()
-	for i := 0; i < 12; i++ {
-		domain := "domain-" + string(rune('a'+i)) + ".example."
+	for i := 0; i < 60; i++ {
+		domain := "domain-" + strconv.Itoa(i) + ".example."
 		s.RecordBlockedQuery("192.0.2.1", domain)
 	}
 	dataPath := t.TempDir()
@@ -54,8 +54,8 @@ func TestDomainRankingsPersistAndReturnTopTen(t *testing.T) {
 		t.Fatalf("load %s: %v", filepath.Join(dataPath, "cache", "stats.json"), err)
 	}
 	got := loaded.GetSnapshot().TopBlockedDomains
-	if len(got) != 10 {
-		t.Fatalf("blocked domain count = %d, want 10", len(got))
+	if len(got) != topDomainLimit {
+		t.Fatalf("blocked domain count = %d, want %d", len(got), topDomainLimit)
 	}
 	if got[0].TopClient != "192.0.2.1" || got[0].TopClientCount != 1 {
 		t.Errorf("persisted client stats = %+v", got[0])
@@ -71,8 +71,8 @@ func TestClientTrackingIsBoundedPerDomain(t *testing.T) {
 	if got := len(item.clients); got != maxClientsPerDomain {
 		t.Fatalf("tracked clients = %d, want bounded at %d", got, maxClientsPerDomain)
 	}
-	if got := len(s.GetSnapshot().TopBlockedDomains[0].TopClients); got != 10 {
-		t.Fatalf("returned clients = %d, want 10", got)
+	if got := len(s.GetSnapshot().TopBlockedDomains[0].TopClients); got != topClientLimit {
+		t.Fatalf("returned clients = %d, want %d", got, topClientLimit)
 	}
 }
 

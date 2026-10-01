@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <title>NbDNS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=3.2.1">
+    <link rel="stylesheet" href="style.css?v=3.3.0">
 </head>
 <body>
     <nav>
@@ -99,11 +99,14 @@
                 <div class="panel-head ranking-head">
                     <div>
                         <h3><span class="ranking-dot" aria-hidden="true"></span>已解析域名</h3>
-                        <p class="panel-subtitle">已放行并进入解析流程</p>
+                        <p class="panel-subtitle">已放行并进入解析流程 · 滚动查看更多</p>
                     </div>
-                    <span class="ranking-badge">Top 10</span>
+                    <div class="ranking-head-actions">
+                        <span class="ranking-badge">Top 50</span>
+                        <button class="ranking-expand-btn" data-target="resolved-domain-list" aria-controls="resolved-domain-list" aria-expanded="false">展开全部</button>
+                    </div>
                 </div>
-                <div class="tbl-wrap">
+                <div id="resolved-domain-list" class="tbl-wrap domain-list-scroll" tabindex="0" aria-label="已解析域名排行，可滚动">
                     <table id="top-domains-table">
                         <thead>
                             <tr><th class="w-rank">#</th><th>域名</th><th>请求</th><th>主要客户端 / 请求</th></tr>
@@ -118,11 +121,14 @@
                 <div class="panel-head ranking-head">
                     <div>
                         <h3><span class="ranking-dot" aria-hidden="true"></span>已拦截域名</h3>
-                        <p class="panel-subtitle">命中过滤规则的 DNS 请求</p>
+                        <p class="panel-subtitle">命中过滤规则的 DNS 请求 · 滚动查看更多</p>
                     </div>
-                    <span class="ranking-badge">Top 10</span>
+                    <div class="ranking-head-actions">
+                        <span class="ranking-badge">Top 50</span>
+                        <button class="ranking-expand-btn" data-target="blocked-domain-list" aria-controls="blocked-domain-list" aria-expanded="false">展开全部</button>
+                    </div>
                 </div>
-                <div class="tbl-wrap">
+                <div id="blocked-domain-list" class="tbl-wrap domain-list-scroll" tabindex="0" aria-label="已拦截域名排行，可滚动">
                     <table id="top-blocked-domains-table">
                         <thead>
                             <tr><th class="w-rank">#</th><th>域名</th><th>请求</th><th>主要客户端 / 请求</th></tr>
@@ -138,6 +144,6 @@
 
     <footer>NbDNS — 智能 DNS 中继</footer>
 
-    <script src="app.js?v=3.2.1"></script>
+    <script src="app.js?v=3.3.0"></script>
 </body>
 </html>
