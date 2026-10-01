@@ -324,28 +324,28 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	}
 	h.logger.Printf("nbdns::request %+v\n", req)
 
-	// 记录查询统计
+	// 所有进入核心处理流程的请求都计入总查询数。
 	if h.stats != nil {
 		h.stats.RecordQuery()
-
-		// 提取域名（如果未提供）
-		if domain == "" && len(req.Question) > 0 {
-			domain = req.Question[0].Name
-		}
-
-		// 记录客户端查询
-		if clientIP != "" || domain != "" {
-			h.stats.RecordClientQuery(clientIP, domain)
-		}
+	}
+	// 提取域名（如果未提供）。域名榜单要等过滤结果确定后再分类记录。
+	if domain == "" && len(req.Question) > 0 {
+		domain = req.Question[0].Name
 	}
 	if req.Response || req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 {
 		return new(dns.Msg).SetRcodeFormatError(req)
 	}
 	if h.filter != nil && h.filter.Blocked(req.Question[0].Name) {
+		if h.stats != nil {
+			h.stats.RecordBlockedQuery(clientIP, domain)
+		}
 		resp := new(dns.Msg).SetRcode(req, dns.RcodeNameError)
 		resp.RecursionAvailable = true
 		setResponseEDNS(req, resp)
 		return resp
+	}
+	if h.stats != nil {
+		h.stats.RecordClientQuery(clientIP, domain)
 	}
 	h.removeEDNS(req)
 

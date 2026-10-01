@@ -97,20 +97,87 @@ function updateFilters(data) {
 function updateTopClients(list) {
     var tb = document.getElementById('top-clients-tbody');
     if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="3" class="empty">暂无数据</td></tr>'; return; }
-    tb.innerHTML = list.map(function(c, i) {
-        return '<tr class="' + (i < 3 ? 'rank-' + (i + 1) : '') + '"><td class="rank-cell">' +
-            (i + 1) + '</td><td>' + (c.key || '-') + '</td><td>' + fmt(c.count || 0) + '</td></tr>';
-    }).join('');
+    tb.replaceChildren();
+    list.slice(0, 10).forEach(function(c, i) {
+        var row = document.createElement('tr');
+        if (i < 3) row.className = 'rank-' + (i + 1);
+        var rank = document.createElement('td');
+        rank.className = 'rank-cell'; rank.textContent = i + 1;
+        var client = document.createElement('td');
+        client.className = 'client-address'; client.textContent = c.key || '-'; client.title = c.key || '';
+        var count = document.createElement('td');
+        count.className = 'number-cell'; count.textContent = fmt(c.count || 0);
+        row.append(rank, client, count); tb.appendChild(row);
+    });
 }
 
-function updateTopDomains(list) {
-    var tb = document.getElementById('top-domains-tbody');
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="4" class="empty">暂无数据</td></tr>'; return; }
-    tb.innerHTML = list.map(function(d, i) {
-        return '<tr class="' + (i < 3 ? 'rank-' + (i + 1) : '') + '"><td class="rank-cell">' +
-            (i + 1) + '</td><td class="domain-cell" title="' + d.key + '">' + (d.key || '-') +
-            '</td><td>' + fmt(d.count || 0) + '</td><td>' + (d.top_client || '-') + '</td></tr>';
-    }).join('');
+function clientListFor(domain) {
+    if (Array.isArray(domain.top_clients) && domain.top_clients.length) return domain.top_clients.slice(0, 10);
+    if (domain.top_client) return [{ client: domain.top_client, count: domain.top_client_count || 0 }];
+    return [];
+}
+
+function makeClientBreakdown(domain, wasOpen) {
+    var clients = clientListFor(domain);
+    if (!clients.length) {
+        var none = document.createElement('span'); none.className = 'dim'; none.textContent = '-'; return none;
+    }
+
+    var primary = document.createElement('span');
+    primary.className = 'client-primary'; primary.textContent = clients[0].client || '-';
+    primary.title = clients[0].client || '';
+    var count = document.createElement('span');
+    count.className = 'client-count'; count.textContent = fmt(clients[0].count || 0);
+    count.title = '该客户端请求数';
+    if (clients.length === 1) {
+        var single = document.createElement('div'); single.className = 'client-summary single';
+        single.append(primary, count); return single;
+    }
+
+    var details = document.createElement('details'); details.className = 'client-breakdown'; details.open = wasOpen;
+    var summary = document.createElement('summary'); summary.className = 'client-summary';
+    summary.setAttribute('aria-label', '查看该域名的客户端 Top 10');
+    var more = document.createElement('span'); more.className = 'client-more'; more.textContent = '+' + (clients.length - 1);
+    summary.append(primary, count, more); details.appendChild(summary);
+
+    var panel = document.createElement('div'); panel.className = 'client-detail-panel';
+    var label = document.createElement('div'); label.className = 'client-detail-title'; label.textContent = '客户端 Top 10';
+    var list = document.createElement('ol');
+    clients.forEach(function(item) {
+        var row = document.createElement('li');
+        var address = document.createElement('span'); address.textContent = item.client || '-'; address.title = item.client || '';
+        var requests = document.createElement('strong'); requests.textContent = fmt(item.count || 0);
+        row.append(address, requests); list.appendChild(row);
+    });
+    panel.append(label, list); details.appendChild(panel); return details;
+}
+
+function updateDomainRanking(list, tbodyId, emptyText) {
+    var tb = document.getElementById(tbodyId);
+    var openDomains = {};
+    Array.prototype.forEach.call(tb.querySelectorAll('tr[data-domain]'), function(row) {
+        var details = row.querySelector('details[open]');
+        if (details) openDomains[row.getAttribute('data-domain')] = true;
+    });
+    tb.replaceChildren();
+    if (!list || !list.length) {
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 4; emptyCell.className = 'empty'; emptyCell.textContent = emptyText;
+        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow); return;
+    }
+    list.slice(0, 10).forEach(function(domain, i) {
+        var row = document.createElement('tr');
+        var domainName = domain.key || '-';
+        row.setAttribute('data-domain', domainName);
+        if (i < 3) row.className = 'rank-' + (i + 1);
+        var rank = document.createElement('td'); rank.className = 'rank-cell'; rank.textContent = i + 1;
+        var name = document.createElement('td'); name.className = 'domain-cell'; name.textContent = domainName; name.title = domainName;
+        var requests = document.createElement('td'); requests.className = 'number-cell'; requests.textContent = fmt(domain.count || 0);
+        var clients = document.createElement('td'); clients.className = 'client-breakdown-cell';
+        clients.appendChild(makeClientBreakdown(domain, !!openDomains[domainName]));
+        row.append(rank, name, requests, clients); tb.appendChild(row);
+    });
 }
 
 function tick() {
@@ -135,9 +202,10 @@ async function load() {
         updateQueries(d.queries);
         updateUpstream(d.upstreams);
         updateTopClients(d.top_clients);
-        updateTopDomains(d.top_domains);
-		var filters = await fetch('/api/filters');
-		if (filters.ok) updateFilters(await filters.json());
+        updateDomainRanking(d.top_domains, 'top-domains-tbody', '暂无解析记录');
+        updateDomainRanking(d.top_blocked_domains, 'top-blocked-domains-tbody', '暂无拦截记录');
+        var filters = await fetch('/api/filters');
+        if (filters.ok) updateFilters(await filters.json());
         resetCD();
     } catch(e) {
         document.getElementById('last-update').textContent = '失败';

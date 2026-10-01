@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// 每个域名只保留有限数量的高频客户端候选。榜单只展示 Top 10，额外容量用于
+// 避免普通流量波动频繁淘汰候选，同时阻止伪造大量客户端地址造成内存无限增长。
+const maxClientsPerDomain = 64
+
 // StatsRecorder 定义统计接口
 type StatsRecorder interface {
 	RecordQuery()
@@ -20,6 +24,7 @@ type StatsRecorder interface {
 	RecordFailed()
 	RecordUpstreamQuery(address string, isError bool)
 	RecordClientQuery(clientIP, domain string)
+	RecordBlockedQuery(clientIP, domain string)
 	GetSnapshot() StatsSnapshot
 	Reset()
 	Save(dataPath string) error
@@ -43,8 +48,9 @@ type Stats struct {
 	mu            sync.RWMutex
 
 	// Top N 统计
-	topClients *TopNTracker // 客户端 IP Top N
-	topDomains *TopNTracker // 查询域名 Top N
+	topClients        *TopNTracker // 客户端 IP Top N
+	topDomains        *TopNTracker // 已解析域名 Top N
+	topBlockedDomains *TopNTracker // 被拦截域名 Top N
 }
 
 // UpstreamStats 上游服务器统计
@@ -60,11 +66,12 @@ type UpstreamStats struct {
 func NewStats() *Stats {
 	now := time.Now()
 	return &Stats{
-		StartTime:      now,
-		StatsStartTime: now,
-		upstreamStats:  make(map[string]*UpstreamStats),
-		topClients:     NewTopNTracker(100), // 最多保留 100 个客户端 IP
-		topDomains:     NewTopNTracker(200), // 最多保留 200 个域名
+		StartTime:         now,
+		StatsStartTime:    now,
+		upstreamStats:     make(map[string]*UpstreamStats),
+		topClients:        NewTopNTracker(100), // 最多保留 100 个客户端 IP
+		topDomains:        NewTopNTracker(200), // 最多保留 200 个域名
+		topBlockedDomains: NewTopNTracker(200), // 最多保留 200 个被拦截域名
 	}
 }
 
@@ -123,13 +130,23 @@ func (s *Stats) RecordUpstreamQuery(address string, isError bool) {
 	us.mu.Unlock()
 }
 
-// RecordClientQuery 记录客户端查询（IP 和域名）
+// RecordClientQuery 记录一次未被过滤器拦截的客户端查询。
 func (s *Stats) RecordClientQuery(clientIP, domain string) {
 	if clientIP != "" {
 		s.topClients.Record(clientIP, "")
 	}
 	if domain != "" {
 		s.topDomains.Record(domain, clientIP)
+	}
+}
+
+// RecordBlockedQuery 记录一次被过滤器拦截的查询。
+func (s *Stats) RecordBlockedQuery(clientIP, domain string) {
+	if clientIP != "" {
+		s.topClients.Record(clientIP, "")
+	}
+	if domain != "" {
+		s.topBlockedDomains.Record(domain, clientIP)
 	}
 }
 
@@ -152,8 +169,9 @@ func (s *Stats) Reset() {
 	s.upstreamStats = make(map[string]*UpstreamStats)
 
 	// 重置 Top N 统计
-	s.topClients = NewTopNTracker(100)
-	s.topDomains = NewTopNTracker(200)
+	s.topClients.Reset()
+	s.topDomains.Reset()
+	s.topBlockedDomains.Reset()
 }
 
 // RuntimeStats 运行时统计信息
@@ -190,18 +208,27 @@ type UpstreamStatsJSON struct {
 
 // TopNItemJSON Top N 项目（JSON格式）
 type TopNItemJSON struct {
-	Key       string `json:"key"`                  // IP 地址或域名
-	Count     uint64 `json:"count"`                // 查询次数
-	TopClient string `json:"top_client,omitempty"` // 查询最多的客户端 IP（仅域名统计有）
+	Key            string            `json:"key"`                        // IP 地址或域名
+	Count          uint64            `json:"count"`                      // 查询次数
+	TopClient      string            `json:"top_client,omitempty"`       // 查询最多的客户端 IP（仅域名统计有）
+	TopClientCount uint64            `json:"top_client_count,omitempty"` // 该客户端的查询次数
+	TopClients     []ClientCountJSON `json:"top_clients,omitempty"`      // 查询该域名最多的客户端 Top 10
+}
+
+// ClientCountJSON 域名下的客户端请求数。
+type ClientCountJSON struct {
+	Client string `json:"client"`
+	Count  uint64 `json:"count"`
 }
 
 // StatsSnapshot 完整统计快照
 type StatsSnapshot struct {
-	Runtime    RuntimeStats        `json:"runtime"`     // 运行时信息
-	Queries    QueryStats          `json:"queries"`     // 查询统计
-	Upstreams  []UpstreamStatsJSON `json:"upstreams"`   // 上游服务器统计
-	TopClients []TopNItemJSON      `json:"top_clients"` // Top 客户端 IP
-	TopDomains []TopNItemJSON      `json:"top_domains"` // Top 查询域名
+	Runtime           RuntimeStats        `json:"runtime"`             // 运行时信息
+	Queries           QueryStats          `json:"queries"`             // 查询统计
+	Upstreams         []UpstreamStatsJSON `json:"upstreams"`           // 上游服务器统计
+	TopClients        []TopNItemJSON      `json:"top_clients"`         // Top 客户端 IP
+	TopDomains        []TopNItemJSON      `json:"top_domains"`         // Top 已解析域名
+	TopBlockedDomains []TopNItemJSON      `json:"top_blocked_domains"` // Top 被拦截域名
 }
 
 // GetSnapshot 获取统计快照
@@ -213,7 +240,10 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 	uptime := time.Since(s.StartTime)
 	uptimeStr := formatDuration(uptime)
 
-	statsDuration := time.Since(s.StatsStartTime)
+	s.mu.RLock()
+	statsStartTime := s.StatsStartTime
+	s.mu.RUnlock()
+	statsDuration := time.Since(statsStartTime)
 	statsDurationStr := formatDuration(statsDuration)
 
 	runtimeStats := RuntimeStats{
@@ -283,30 +313,51 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 
 	// Top N 客户端 IP
 	topClients := make([]TopNItemJSON, 0)
-	for _, item := range s.topClients.GetTopN(20) { // 返回 Top 20
+	for _, item := range s.topClients.GetTopN(10) {
 		topClients = append(topClients, TopNItemJSON{
 			Key:   item.Key,
 			Count: item.Count,
 		})
 	}
 
-	// Top N 查询域名
-	topDomains := make([]TopNItemJSON, 0)
-	for _, item := range s.topDomains.GetTopN(20) { // 返回 Top 20
-		topDomains = append(topDomains, TopNItemJSON{
-			Key:       item.Key,
-			Count:     item.Count,
-			TopClient: item.TopClient,
-		})
-	}
+	// Top N 已解析及被拦截域名，每个域名附带客户端 Top 10。
+	topDomains := topDomainItems(s.topDomains, 10)
+	topBlockedDomains := topDomainItems(s.topBlockedDomains, 10)
 
 	return StatsSnapshot{
-		Runtime:    runtimeStats,
-		Queries:    queryStats,
-		Upstreams:  upstreams,
-		TopClients: topClients,
-		TopDomains: topDomains,
+		Runtime:           runtimeStats,
+		Queries:           queryStats,
+		Upstreams:         upstreams,
+		TopClients:        topClients,
+		TopDomains:        topDomains,
+		TopBlockedDomains: topBlockedDomains,
 	}
+}
+
+func topDomainItems(tracker *TopNTracker, n int) []TopNItemJSON {
+	result := make([]TopNItemJSON, 0)
+	for _, item := range tracker.GetTopN(n) {
+		clients := make([]ClientCountJSON, 0, len(item.clients))
+		for client, count := range item.clients {
+			clients = append(clients, ClientCountJSON{Client: client, Count: count})
+		}
+		sort.Slice(clients, func(i, j int) bool {
+			if clients[i].Count == clients[j].Count {
+				return clients[i].Client < clients[j].Client
+			}
+			return clients[i].Count > clients[j].Count
+		})
+		if len(clients) > 10 {
+			clients = clients[:10]
+		}
+		entry := TopNItemJSON{Key: item.Key, Count: item.Count, TopClients: clients}
+		if len(clients) > 0 {
+			entry.TopClient = clients[0].Client
+			entry.TopClientCount = clients[0].Count
+		}
+		result = append(result, entry)
+	}
+	return result
 }
 
 // formatDuration 格式化时长为可读格式
@@ -388,15 +439,16 @@ type TopNItem struct {
 
 // PersistentStats 持久化统计数据结构
 type PersistentStats struct {
-	StatsStartTime time.Time                      `json:"stats_start_time"` // 统计开始时间（可持久化）
-	TotalQueries   uint64                         `json:"total_queries"`
-	DoHQueries     uint64                         `json:"doh_queries"`
-	CacheHits      uint64                         `json:"cache_hits"`
-	CacheMisses    uint64                         `json:"cache_misses"`
-	FailedQueries  uint64                         `json:"failed_queries"`
-	Upstreams      map[string]*PersistentUpstream `json:"upstreams"`
-	TopClients     []PersistentTopNItem           `json:"top_clients"`
-	TopDomains     []PersistentTopNItem           `json:"top_domains"`
+	StatsStartTime    time.Time                      `json:"stats_start_time"` // 统计开始时间（可持久化）
+	TotalQueries      uint64                         `json:"total_queries"`
+	DoHQueries        uint64                         `json:"doh_queries"`
+	CacheHits         uint64                         `json:"cache_hits"`
+	CacheMisses       uint64                         `json:"cache_misses"`
+	FailedQueries     uint64                         `json:"failed_queries"`
+	Upstreams         map[string]*PersistentUpstream `json:"upstreams"`
+	TopClients        []PersistentTopNItem           `json:"top_clients"`
+	TopDomains        []PersistentTopNItem           `json:"top_domains"`
+	TopBlockedDomains []PersistentTopNItem           `json:"top_blocked_domains,omitempty"`
 }
 
 // PersistentUpstream 持久化上游服务器统计
@@ -417,10 +469,20 @@ type PersistentTopNItem struct {
 
 // NewTopNTracker 创建 Top N 追踪器
 func NewTopNTracker(maxItems int) *TopNTracker {
+	if maxItems < 1 {
+		maxItems = 1
+	}
 	return &TopNTracker{
 		items:    make(map[string]*TopNItem),
 		maxItems: maxItems,
 	}
+}
+
+// Reset 清空追踪器，同时保留追踪器本身，避免并发请求持有失效指针。
+func (t *TopNTracker) Reset() {
+	t.mu.Lock()
+	t.items = make(map[string]*TopNItem)
+	t.mu.Unlock()
 }
 
 // Record 记录一次访问（可选关联的客户端 IP）
@@ -430,13 +492,15 @@ func (t *TopNTracker) Record(key, associatedClient string) {
 
 	item, exists := t.items[key]
 	if !exists {
-		// 如果超过最大数量，删除计数最少的项
+		// 如果超过最大数量，复用计数最少的项，避免高基数输入导致持续分配。
 		if len(t.items) >= t.maxItems {
-			t.evictLowest()
-		}
-		item = &TopNItem{
-			Key:     key,
-			clients: make(map[string]uint64),
+			item = t.evictLowest()
+			item.Key = key
+			item.Count = 0
+			item.TopClient = ""
+			clear(item.clients)
+		} else {
+			item = &TopNItem{Key: key}
 		}
 		t.items[key] = item
 	}
@@ -445,6 +509,12 @@ func (t *TopNTracker) Record(key, associatedClient string) {
 
 	// 如果有关联客户端，记录客户端分布
 	if associatedClient != "" {
+		if item.clients == nil {
+			item.clients = make(map[string]uint64)
+		}
+		if _, exists := item.clients[associatedClient]; !exists && len(item.clients) >= maxClientsPerDomain {
+			item.evictLowestClient()
+		}
 		item.clients[associatedClient]++
 		// 更新 Top1 客户端
 		if item.clients[associatedClient] > item.clients[item.TopClient] {
@@ -453,8 +523,32 @@ func (t *TopNTracker) Record(key, associatedClient string) {
 	}
 }
 
-// evictLowest 删除计数最少的项（不加锁，由调用者加锁）
-func (t *TopNTracker) evictLowest() {
+// evictLowestClient 删除请求数最低的客户端候选（不加锁，由调用者加锁）。
+func (item *TopNItem) evictLowestClient() {
+	var lowest string
+	minCount := ^uint64(0)
+	for client, count := range item.clients {
+		if count < minCount || (count == minCount && client > lowest) {
+			lowest = client
+			minCount = count
+		}
+	}
+	if lowest == "" {
+		return
+	}
+	delete(item.clients, lowest)
+	if item.TopClient == lowest {
+		item.TopClient = ""
+		for client, count := range item.clients {
+			if count > item.clients[item.TopClient] || (count == item.clients[item.TopClient] && client < item.TopClient) {
+				item.TopClient = client
+			}
+		}
+	}
+}
+
+// evictLowest 移除并返回计数最少的项（不加锁，由调用者加锁）。
+func (t *TopNTracker) evictLowest() *TopNItem {
 	var minKey string
 	var minCount uint64 = ^uint64(0) // 最大值
 
@@ -465,9 +559,9 @@ func (t *TopNTracker) evictLowest() {
 		}
 	}
 
-	if minKey != "" {
-		delete(t.items, minKey)
-	}
+	item := t.items[minKey]
+	delete(t.items, minKey)
+	return item
 }
 
 // GetTopN 获取 Top N 列表
@@ -475,26 +569,39 @@ func (t *TopNTracker) GetTopN(n int) []TopNItem {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	// 复制所有项
-	items := make([]TopNItem, 0, len(t.items))
+	// 先只排序轻量指针，确定前 N 后再复制客户端分布。快照通常只需要 10 项，
+	// 避免为未入榜的域名分配和复制 map。
+	candidates := make([]*TopNItem, 0, len(t.items))
 	for _, item := range t.items {
+		candidates = append(candidates, item)
+	}
+
+	// 按查询次数降序排序
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Count == candidates[j].Count {
+			return candidates[i].Key < candidates[j].Key
+		}
+		return candidates[i].Count > candidates[j].Count
+	})
+
+	// 返回前 N 项
+	if n > len(candidates) {
+		n = len(candidates)
+	}
+	items := make([]TopNItem, 0, n)
+	for _, item := range candidates[:n] {
+		clients := make(map[string]uint64, len(item.clients))
+		for client, count := range item.clients {
+			clients[client] = count
+		}
 		items = append(items, TopNItem{
 			Key:       item.Key,
 			Count:     item.Count,
 			TopClient: item.TopClient,
+			clients:   clients,
 		})
 	}
-
-	// 按查询次数降序排序
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Count > items[j].Count
-	})
-
-	// 返回前 N 项
-	if n > len(items) {
-		n = len(items)
-	}
-	return items[:n]
+	return items
 }
 
 // Save 保存统计数据到 JSON 文件
@@ -504,15 +611,16 @@ func (s *Stats) Save(dataPath string) error {
 
 	// 准备持久化数据
 	persistent := PersistentStats{
-		StatsStartTime: s.StatsStartTime,
-		TotalQueries:   s.TotalQueries.Load(),
-		DoHQueries:     s.DoHQueries.Load(),
-		CacheHits:      s.CacheHits.Load(),
-		CacheMisses:    s.CacheMisses.Load(),
-		FailedQueries:  s.FailedQueries.Load(),
-		Upstreams:      make(map[string]*PersistentUpstream),
-		TopClients:     make([]PersistentTopNItem, 0),
-		TopDomains:     make([]PersistentTopNItem, 0),
+		StatsStartTime:    s.StatsStartTime,
+		TotalQueries:      s.TotalQueries.Load(),
+		DoHQueries:        s.DoHQueries.Load(),
+		CacheHits:         s.CacheHits.Load(),
+		CacheMisses:       s.CacheMisses.Load(),
+		FailedQueries:     s.FailedQueries.Load(),
+		Upstreams:         make(map[string]*PersistentUpstream),
+		TopClients:        make([]PersistentTopNItem, 0),
+		TopDomains:        make([]PersistentTopNItem, 0),
+		TopBlockedDomains: make([]PersistentTopNItem, 0),
 	}
 
 	// 保存上游服务器统计
@@ -527,29 +635,10 @@ func (s *Stats) Save(dataPath string) error {
 		us.mu.RUnlock()
 	}
 
-	// 保存 Top 客户端
-	s.topClients.mu.RLock()
-	for _, item := range s.topClients.items {
-		persistent.TopClients = append(persistent.TopClients, PersistentTopNItem{
-			Key:       item.Key,
-			Count:     item.Count,
-			TopClient: item.TopClient,
-			Clients:   item.clients,
-		})
-	}
-	s.topClients.mu.RUnlock()
-
-	// 保存 Top 域名
-	s.topDomains.mu.RLock()
-	for _, item := range s.topDomains.items {
-		persistent.TopDomains = append(persistent.TopDomains, PersistentTopNItem{
-			Key:       item.Key,
-			Count:     item.Count,
-			TopClient: item.TopClient,
-			Clients:   item.clients,
-		})
-	}
-	s.topDomains.mu.RUnlock()
+	// 深拷贝追踪器数据，避免序列化期间并发请求修改客户端 map。
+	persistent.TopClients = persistentTopNItems(s.topClients)
+	persistent.TopDomains = persistentTopNItems(s.topDomains)
+	persistent.TopBlockedDomains = persistentTopNItems(s.topBlockedDomains)
 
 	// 序列化为 JSON
 	data, err := json.MarshalIndent(persistent, "", "  ")
@@ -566,6 +655,25 @@ func (s *Stats) Save(dataPath string) error {
 	// 写入文件
 	statsFile := filepath.Join(statsPath, "stats.json")
 	return os.WriteFile(statsFile, data, 0644)
+}
+
+func persistentTopNItems(tracker *TopNTracker) []PersistentTopNItem {
+	tracker.mu.RLock()
+	defer tracker.mu.RUnlock()
+	items := make([]PersistentTopNItem, 0, len(tracker.items))
+	for _, item := range tracker.items {
+		clients := make(map[string]uint64, len(item.clients))
+		for client, count := range item.clients {
+			clients[client] = count
+		}
+		items = append(items, PersistentTopNItem{
+			Key:       item.Key,
+			Count:     item.Count,
+			TopClient: item.TopClient,
+			Clients:   clients,
+		})
+	}
+	return items
 }
 
 // Load 从 JSON 文件加载统计数据
@@ -617,13 +725,9 @@ func (s *Stats) Load(dataPath string) error {
 	s.topClients.mu.Lock()
 	for _, pitem := range persistent.TopClients {
 		item := &TopNItem{
-			Key:       pitem.Key,
-			Count:     pitem.Count,
-			TopClient: pitem.TopClient,
-			clients:   pitem.Clients,
-		}
-		if item.clients == nil {
-			item.clients = make(map[string]uint64)
+			Key:     pitem.Key,
+			Count:   pitem.Count,
+			clients: make(map[string]uint64),
 		}
 		s.topClients.items[pitem.Key] = item
 	}
@@ -632,18 +736,55 @@ func (s *Stats) Load(dataPath string) error {
 	// 恢复 Top 域名
 	s.topDomains.mu.Lock()
 	for _, pitem := range persistent.TopDomains {
+		clients, topClient := restoredClients(pitem)
 		item := &TopNItem{
 			Key:       pitem.Key,
 			Count:     pitem.Count,
-			TopClient: pitem.TopClient,
-			clients:   pitem.Clients,
-		}
-		if item.clients == nil {
-			item.clients = make(map[string]uint64)
+			TopClient: topClient,
+			clients:   clients,
 		}
 		s.topDomains.items[pitem.Key] = item
 	}
 	s.topDomains.mu.Unlock()
 
+	// 恢复 Top 被拦截域名（旧版统计文件没有该字段时保持为空）。
+	s.topBlockedDomains.mu.Lock()
+	for _, pitem := range persistent.TopBlockedDomains {
+		clients, topClient := restoredClients(pitem)
+		item := &TopNItem{
+			Key:       pitem.Key,
+			Count:     pitem.Count,
+			TopClient: topClient,
+			clients:   clients,
+		}
+		s.topBlockedDomains.items[pitem.Key] = item
+	}
+	s.topBlockedDomains.mu.Unlock()
+
 	return nil
+}
+
+func restoredClients(item PersistentTopNItem) (map[string]uint64, string) {
+	clients := make([]ClientCountJSON, 0, len(item.Clients))
+	for client, count := range item.Clients {
+		clients = append(clients, ClientCountJSON{Client: client, Count: count})
+	}
+	sort.Slice(clients, func(i, j int) bool {
+		if clients[i].Count == clients[j].Count {
+			return clients[i].Client < clients[j].Client
+		}
+		return clients[i].Count > clients[j].Count
+	})
+	if len(clients) > maxClientsPerDomain {
+		clients = clients[:maxClientsPerDomain]
+	}
+	restored := make(map[string]uint64, len(clients))
+	for _, client := range clients {
+		restored[client.Client] = client.Count
+	}
+	topClient := item.TopClient
+	if len(clients) > 0 {
+		topClient = clients[0].Client
+	}
+	return restored, topClient
 }

@@ -131,6 +131,13 @@ main {
     gap: 20px;
 }
 
+.rankings-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, .72fr) repeat(2, minmax(0, 1.14fr));
+    gap: 20px;
+    align-items: start;
+}
+
 .panel {
     background: var(--bg2);
     border: 1px solid var(--line);
@@ -149,6 +156,47 @@ main {
 }
 
 .panel-head h3 { margin-bottom: 0; }
+
+.ranking-head {
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.ranking-head > div { min-width: 0; }
+
+.panel-subtitle {
+    margin-top: 3px;
+    color: var(--fg3);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.ranking-badge {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--fg3);
+    font: 10px/1.4 "SF Mono", Menlo, Consolas, monospace;
+    letter-spacing: .2px;
+}
+
+.domain-ranking-panel { border-top-width: 3px; }
+.resolved-ranking { border-top-color: var(--good); }
+.blocked-ranking { border-top-color: var(--bad); }
+
+.ranking-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 7px;
+    border-radius: 50%;
+    vertical-align: 1px;
+    background: var(--good);
+}
+
+.blocked-ranking .ranking-dot { background: var(--bad); }
 
 h3 {
     font-size: 13px;
@@ -224,6 +272,15 @@ td {
     font-variant-numeric: tabular-nums;
 }
 
+.rankings-grid tbody tr:hover { background: var(--bg); }
+
+.number-cell {
+    text-align: right;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+
+#top-clients-table th:last-child { text-align: right; }
+
 tbody tr:last-child td { border-bottom: none; }
 
 .w-rank { width: 36px; text-align: center; }
@@ -234,7 +291,107 @@ tbody tr:last-child td { border-bottom: none; }
 .rank-3 .rank-cell { color: #b87; }
 
 .domain-cell {
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.client-address {
+    max-width: 190px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.domain-ranking-panel table { table-layout: fixed; }
+.domain-ranking-panel th:nth-child(3) { width: 64px; text-align: right; }
+.domain-ranking-panel th:nth-child(4) { width: 150px; }
+
+.client-breakdown-cell { vertical-align: top; }
+
+.client-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    cursor: pointer;
+    list-style: none;
+}
+
+.client-summary::-webkit-details-marker { display: none; }
+.client-summary::marker { content: ""; }
+.client-summary.single { grid-template-columns: minmax(0, 1fr) auto; cursor: default; }
+
+.client-primary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.client-count {
+    min-width: 28px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: var(--bg3);
+    text-align: center;
+    color: var(--fg2);
+    font: 600 11px/1.5 "SF Mono", Menlo, Consolas, monospace;
+}
+
+.client-more {
+    color: var(--fg3);
+    font-size: 10px;
+}
+
+.client-breakdown[open] .client-summary { margin-bottom: 8px; }
+
+.client-detail-panel {
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+}
+
+.client-detail-title {
+    margin-bottom: 5px;
+    color: var(--fg3);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    text-transform: uppercase;
+}
+
+.client-detail-panel ol {
+    padding-left: 20px;
+    color: var(--fg3);
+}
+
+.client-detail-panel li {
+    display: list-item;
+    padding: 2px 0;
+}
+
+.client-detail-panel li span {
+    display: inline-block;
+    max-width: calc(100% - 42px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+    color: var(--fg2);
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+}
+
+.client-detail-panel li strong {
+    float: right;
+    color: var(--fg);
+    font: 600 11px/1.6 "SF Mono", Menlo, Consolas, monospace;
 }
 
 .filter-source {
@@ -245,11 +402,33 @@ tbody tr:last-child td { border-bottom: none; }
 .error-high { color: var(--bad); font-weight: 600; }
 .empty { text-align: center; color: var(--fg3); padding: 24px 12px; }
 
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 footer {
     text-align: center;
     padding: 32px 24px;
     font-size: 12px;
     color: var(--fg3);
+}
+
+@media (max-width: 1000px) {
+    .rankings-grid { grid-template-columns: 1fr 1fr; }
+    .rankings-grid > .panel:first-of-type { grid-column: 1 / -1; }
+}
+
+@media (max-width: 760px) {
+    .rankings-grid { grid-template-columns: 1fr; gap: 16px; }
+    .rankings-grid > .panel:first-of-type { grid-column: auto; }
 }
 
 @media (max-width: 640px) {
@@ -260,4 +439,6 @@ footer {
     .kv dd { font-size: 15px; }
     .nav-inner { padding: 0 16px; }
     .hide-sm { display: none; }
+    .domain-ranking-panel th:nth-child(4) { width: 132px; }
+    .domain-cell { max-width: 130px; }
 }

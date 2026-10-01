@@ -119,3 +119,21 @@ func BenchmarkBlocked50k(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkFilterLoad50k(b *testing.B) {
+	var lines strings.Builder
+	for i := range 50000 {
+		lines.WriteString("||ad")
+		lines.WriteString(strconv.Itoa(i))
+		lines.WriteString(".example^\n")
+	}
+	rules := lines.String()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		f := New()
+		if _, err := f.Load(strings.NewReader(rules)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

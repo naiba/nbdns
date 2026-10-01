@@ -12,6 +12,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/filter"
 	"github.com/naiba/nbdns/internal/model"
+	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/logger"
 	"github.com/yl2chen/cidranger"
 )
@@ -212,21 +213,29 @@ func TestFilterBlocksBeforeCacheAndUpstream(t *testing.T) {
 	if _, err := f.Load(strings.NewReader("||ads.example^\n@@||safe.ads.example^\n")); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(model.StrategyAnyResult, false, []*model.Upstream{upstream}, "", logger.New(false), nil)
+	recorder := stats.NewStats()
+	h := NewHandler(model.StrategyAnyResult, false, []*model.Upstream{upstream}, "", logger.New(false), recorder)
 	h.SetFilter(f)
 	blocked := testQuery("x.ads.example.")
 	blocked.SetEdns0(1232, false)
-	resp := h.HandleDnsMsg(blocked, "", "")
+	resp := h.HandleDnsMsg(blocked, "192.0.2.10", "")
 	if resp.Rcode != dns.RcodeNameError || resp.IsEdns0() == nil || resp.AuthenticatedData {
 		t.Errorf("blocked response: %+v", resp)
 	}
 	if got := requests.Load(); got != 0 {
 		t.Errorf("blocked query reached upstream: %d", got)
 	}
-	if resp := h.HandleDnsMsg(testQuery("safe.ads.example."), "", ""); resp.Rcode != dns.RcodeSuccess {
+	if resp := h.HandleDnsMsg(testQuery("safe.ads.example."), "192.0.2.20", ""); resp.Rcode != dns.RcodeSuccess {
 		t.Errorf("allowlisted response: %+v", resp)
 	}
 	if got := requests.Load(); got != 1 {
 		t.Errorf("allowlisted query upstream count = %d, want 1", got)
+	}
+	snapshot := recorder.GetSnapshot()
+	if len(snapshot.TopBlockedDomains) != 1 || snapshot.TopBlockedDomains[0].Key != "x.ads.example." || snapshot.TopBlockedDomains[0].TopClientCount != 1 {
+		t.Errorf("blocked domain stats = %+v", snapshot.TopBlockedDomains)
+	}
+	if len(snapshot.TopDomains) != 1 || snapshot.TopDomains[0].Key != "safe.ads.example." {
+		t.Errorf("resolved domain stats = %+v", snapshot.TopDomains)
 	}
 }

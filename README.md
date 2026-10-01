@@ -109,7 +109,7 @@ Visit `http://localhost:8854` to view:
 - DNS query statistics (total queries, cache hit rate, failures)
 - DNS subscription status (rule counts, refresh errors and blocked queries)
 - Upstream server status (queries, error rate, last used)
-- Top client IPs and queried domains
+- Top 10 clients, resolved/blocked domains, and per-domain client request breakdowns
 - Statistics reset
 
 ### :lock: DoH (DNS over HTTPS)
