@@ -45,6 +45,7 @@ archives:
       - README.md
       - README_zh.md
       - doc/release-v2.0.0.md
+      - doc/release-v2.0.1.md
       - data
 dockers_v2:
   - images:
@@ -75,8 +76,8 @@ changelog:
 
 release:
   header: |
-    ## v2.0.0 — ECS and local DNS overrides
+    ## {{ .Tag }} — lower allocation overhead
 
-    **Breaking configuration changes:** v1 configurations are not compatible. Prepare the new configuration before upgrading. Existing installations may automatically download this release and restart.
+    Faster cache-key construction and fewer filter-index allocations. No configuration changes from v2.0.0. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/v2.0.0/doc/release-v2.0.0.md) and the [configuration schema](https://github.com/naiba/nbdns/blob/v2.0.0/data/config.schema.json).
+    See [performance results and release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.1.md). v1 configurations remain incompatible with v2; prepare your configuration before upgrading.

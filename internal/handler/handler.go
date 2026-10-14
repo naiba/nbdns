@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -202,7 +203,20 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 		}
 
 	}
-	return fmt.Sprintf("%s#%d#%d#%t#%s", strings.ToLower(model.GetDomainNameFromDnsMsg(m)), m.Question[0].Qtype, m.Question[0].Qclass, m.CheckingDisabled, dnssec)
+	// Preserve the persisted key format without fmt's interface boxing and parsing.
+	name := strings.ToLower(model.GetDomainNameFromDnsMsg(m))
+	var storage [280]byte // Maximum DNS name plus numeric flags fits on the stack.
+	key := storage[:0]
+	key = append(key, name...)
+	key = append(key, '#')
+	key = strconv.AppendUint(key, uint64(m.Question[0].Qtype), 10)
+	key = append(key, '#')
+	key = strconv.AppendUint(key, uint64(m.Question[0].Qclass), 10)
+	key = append(key, '#')
+	key = strconv.AppendBool(key, m.CheckingDisabled)
+	key = append(key, '#')
+	key = append(key, dnssec...)
+	return string(key)
 }
 
 func getDnsResponseTtl(m *dns.Msg) time.Duration {

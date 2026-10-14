@@ -24,7 +24,8 @@ type node struct {
 }
 
 type Filter struct {
-	root node
+	root        node
+	unusedNodes []node
 }
 
 type Matcher interface {
@@ -70,10 +71,18 @@ func (f *Filter) add(domain string, allow bool) {
 		if n.children == nil {
 			n.children = make(map[string]*node)
 		}
-		if n.children[label] == nil {
-			n.children[label] = &node{}
+		child := n.children[label]
+		if child == nil {
+			// Allocate stable node batches: avoid a separate GC object per DNS
+			// label without replacing the trie with slower full-suffix hashing.
+			if len(f.unusedNodes) == 0 {
+				f.unusedNodes = make([]node, 255)
+			}
+			child = &f.unusedNodes[0]
+			f.unusedNodes = f.unusedNodes[1:]
+			n.children[label] = child
 		}
-		n = n.children[label]
+		n = child
 		if index < 0 {
 			break
 		}

@@ -137,3 +137,27 @@ func BenchmarkFilterLoad50k(b *testing.B) {
 		}
 	}
 }
+
+// Exercise both rule orders: ancestor exceptions must override descendant blocks.
+func TestFilterExceptionPrecedenceAcrossLoads(t *testing.T) {
+	for _, rules := range [][]string{{"||child.safe.example^\n", "@@||safe.example^\n"}, {"@@||safe.example^\n", "||child.safe.example^\n"}} {
+		f := New()
+		for _, rule := range rules {
+			if _, err := f.Load(strings.NewReader(rule)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, name := range []string{"child.safe.example.", "deep.child.safe.example.", "CHILD.SAFE.EXAMPLE."} {
+			if f.Blocked(name) {
+				t.Fatalf("exception lost for %s", name)
+			}
+		}
+	}
+	f := New()
+	if _, err := f.Load(strings.NewReader("||blocked.example^\n@@||blocked.example^\n||blocked.example^\n||other.example^\n")); err != nil {
+		t.Fatal(err)
+	}
+	if f.Blocked("blocked.example.") || !f.Blocked("child.other.example.") || f.Blocked("notother.example.") {
+		t.Fatal("duplicate exception or label boundary changed")
+	}
+}
