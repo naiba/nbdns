@@ -11,8 +11,8 @@ import (
 	"github.com/dropbox/godropbox/net2"
 	"github.com/miekg/dns"
 	"github.com/pkg/errors"
-	"github.com/yl2chen/cidranger"
 	"go.uber.org/atomic"
+	"net/netip"
 
 	"github.com/naiba/nbdns/pkg/doh"
 	"github.com/naiba/nbdns/pkg/logger"
@@ -20,14 +20,14 @@ import (
 )
 
 type Upstream struct {
-	IsPrimary bool     `json:"is_primary,omitempty"`
-	UseSocks  bool     `json:"use_socks,omitempty"`
-	Address   string   `json:"address,omitempty"`
-	Match     []string `json:"match,omitempty"`
+	ECS          *string  `json:"ecs,omitempty"`
+	ProxyEnabled bool     `json:"proxy_enabled,omitempty"`
+	Address      string   `json:"address,omitempty"`
+	Match        []string `json:"match,omitempty"`
 
 	protocol, hostAndPort, host, port string
 	config                            *Config
-	ipRanger                          cidranger.Ranger
+	ecsPrefix                         netip.Prefix
 	matchSplited                      [][]string
 
 	pool      net2.ConnectionPool
@@ -38,11 +38,13 @@ type Upstream struct {
 	count *atomic.Int64
 }
 
-func (up *Upstream) Init(config *Config, ipRanger cidranger.Ranger, log logger.Logger) {
+func (up *Upstream) Init(config *Config, log logger.Logger) {
 	var ok bool
 	up.protocol, up.hostAndPort, ok = strings.Cut(up.Address, "://")
 	if ok && up.protocol != "https" {
-		up.host, up.port, ok = strings.Cut(up.hostAndPort, ":")
+		var err error
+		up.host, up.port, err = net.SplitHostPort(up.hostAndPort)
+		ok = err == nil
 	}
 	if !ok {
 		panic("上游地址格式(protocol://host:port)有误：" + up.Address)
@@ -55,7 +57,7 @@ func (up *Upstream) Init(config *Config, ipRanger cidranger.Ranger, log logger.L
 	up.matchSplited = utils.ParseRules(up.Match)
 	up.count = atomic.NewInt64(0)
 	up.config = config
-	up.ipRanger = ipRanger
+	up.ecsPrefix, _ = parseECS(up.EffectiveECS())
 	up.logger = log
 }
 
@@ -69,17 +71,14 @@ func (up *Upstream) IsMatch(domain string) bool {
 }
 
 func (up *Upstream) Validate() error {
-	if !up.IsPrimary && up.protocol == "udp" {
-		return errors.New("非 primary 只能使用 tcp(-tls)/https：" + up.Address)
+	if _, err := parseECS(up.EffectiveECS()); err != nil {
+		return err
 	}
-	if up.IsPrimary && up.UseSocks {
-		return errors.New("primary 无需接入 socks：" + up.Address)
+	if up.ProxyEnabled && up.protocol == "udp" {
+		return errors.New("SOCKS upstreams require TCP, TLS or HTTPS")
 	}
-	if up.UseSocks && up.config.SocksProxy == "" {
+	if up.ProxyEnabled && up.config.SocksProxy == "" {
 		return errors.New("socks 未配置，但是上游已启用：" + up.Address)
-	}
-	if up.IsPrimary && up.protocol != "udp" {
-		up.logger.Println("[WARN] Primary 建议使用 udp 加速获取结果：" + up.Address)
 	}
 	return nil
 }
@@ -101,7 +100,7 @@ func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
 		}
 	}
 
-	if up.UseSocks {
+	if up.ProxyEnabled {
 		d, _, err := up.config.GetDialerContext(&net.Dialer{
 			Timeout: time.Second * time.Duration(up.config.Timeout),
 		})
@@ -146,7 +145,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 			doh.WithTimeout(time.Second * time.Duration(up.config.Timeout)),
 			doh.WithLogger(up.logger),
 		}
-		if up.UseSocks {
+		if up.ProxyEnabled {
 			ops = append(ops, doh.WithSocksProxy(up.config.GetDialerContext))
 		}
 		up.dohClient = doh.NewClient(ops...)
@@ -177,49 +176,6 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 	}
 }
 
-func (up *Upstream) IsValidMsg(r *dns.Msg) bool {
-	if r == nil {
-		return false
-	}
-	// An empty Answer is normal for NXDOMAIN/NODATA. Geography checks only
-	// apply when the response actually contains addresses.
-	if r.Rcode == dns.RcodeNameError || (r.Rcode == dns.RcodeSuccess && len(r.Answer) == 0 && len(r.Ns) > 0) {
-		return true
-	}
-	domain := GetDomainNameFromDnsMsg(r)
-	inBlacklist := utils.HasMatchedRule(up.config.BlacklistSplited, domain)
-	for i := 0; i < len(r.Answer); i++ {
-		var ip net.IP
-		typeA, ok := r.Answer[i].(*dns.A)
-		if ok {
-			ip = typeA.A
-		} else {
-			typeAAAA, ok := r.Answer[i].(*dns.AAAA)
-			if !ok {
-				continue
-			}
-			ip = typeAAAA.AAAA
-		}
-		isPrimary, err := up.ipRanger.Contains(ip)
-		if err != nil {
-			up.logger.Printf("ipRanger query ip %s failed: %s", ip, err)
-			continue
-		}
-
-		up.logger.Printf("checkPrimary result %s: %s@%s ->domain.inBlacklist:%v ip.IsPrimary:%v up.IsPrimary:%v", up.Address, domain, ip, inBlacklist, isPrimary, up.IsPrimary)
-
-		// 黑名单中的域名，如果是 primary 即不可用
-		if inBlacklist && isPrimary {
-			return false
-		}
-		// 如果是 server 是 primary，但是 ip 不是 primary，也不可用
-		if up.IsPrimary && !isPrimary {
-			return false
-		}
-	}
-	return !up.IsPrimary || len(r.Answer) > 0
-}
-
 func GetDomainNameFromDnsMsg(msg *dns.Msg) string {
 	if msg == nil || len(msg.Question) == 0 {
 		return ""
@@ -238,6 +194,8 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
 	defer up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
 
+	// Never forward caller-supplied ECS or mutate shared requests during racing.
+	req = up.controlledECSRequest(req)
 	var resp *dns.Msg
 	var duration time.Duration
 	var err error
@@ -294,4 +252,53 @@ func dnsExchangeWithConn(conn net2.ManagedConn, req *dns.Msg) (*dns.Msg, error) 
 		conn.DiscardConnection()
 	}
 	return resp, err
+}
+
+// EffectiveECS distinguishes an omitted override (inherit) from an explicit empty override (disable).
+func (up *Upstream) EffectiveECS() string {
+	if up.ECS != nil {
+		return *up.ECS
+	}
+	if up.config != nil {
+		return up.config.ECS
+	}
+	return ""
+}
+
+func parseECS(value string) (netip.Prefix, error) {
+	if value == "" {
+		return netip.Prefix{}, nil
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || prefix.Addr().Is4In6() {
+		return netip.Prefix{}, fmt.Errorf("invalid ECS CIDR %q", value)
+	}
+	return prefix.Masked(), nil
+}
+
+func (up *Upstream) controlledECSRequest(request *dns.Msg) *dns.Msg {
+	req := request.Copy()
+	opt := req.IsEdns0()
+	if opt != nil {
+		options := opt.Option[:0]
+		for _, option := range opt.Option {
+			if _, ok := option.(*dns.EDNS0_SUBNET); !ok {
+				options = append(options, option)
+			}
+		}
+		opt.Option = options
+	}
+	if !up.ecsPrefix.IsValid() {
+		return req
+	}
+	if opt == nil {
+		req.SetEdns0(1232, false)
+		opt = req.IsEdns0()
+	}
+	family := uint16(2)
+	if up.ecsPrefix.Addr().Is4() {
+		family = 1
+	}
+	opt.Option = append(opt.Option, &dns.EDNS0_SUBNET{Code: dns.EDNS0SUBNET, Family: family, SourceNetmask: uint8(up.ecsPrefix.Bits()), SourceScope: 0, Address: net.IP(up.ecsPrefix.Addr().AsSlice())})
+	return req
 }

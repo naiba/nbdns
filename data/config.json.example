@@ -1,7 +1,7 @@
 {
+    "$schema": "./config.schema.json",
     "debug": false,
     "profiling": false,
-    "strategy": 2,
     "timeout": 2,
     "serve_addr": "127.0.0.1:8853",
     "web_addr": "0.0.0.0:8854",
@@ -16,45 +16,18 @@
     },
     "bootstrap": [
         {
-            "address": "udp://223.5.5.5:53"
-        },
-        {
-            "address": "udp://223.6.6.6:53"
+            "address": "tcp-tls://8.8.8.8:853",
+            "ecs": ""
         }
     ],
     "upstreams": [
         {
-            "address": "udp://223.5.5.5:53",
-            "is_primary": true
-        },
-        {
-            "address": "udp://223.6.6.6:53",
-            "is_primary": true
-        },
-        {
-            "address": "udp://114.114.114.114:53",
-            "is_primary": true
-        },
-        {
-            "address": "udp://119.28.28.28:53",
-            "is_primary": true
-        },
-        {
-            "address": "tcp-tls://one.one.one.one:853",
-            "use_socks": false
-        },
-        {
             "address": "https://dns.google/dns-query",
-            "use_socks": false,
-            "match": [
-                ".onion"
-            ]
+            "proxy_enabled": false
         }
     ],
-    "blacklist": [
-        "bing.com",
-        ".bing.com"
-    ],
     "filter_lists": [],
-    "filter_update_interval_hours": 24
+    "filter_update_interval_hours": 24,
+    "ecs": "180.152.0.0/24",
+    "custom_records": []
 }

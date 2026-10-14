@@ -1,11 +1,12 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -18,9 +19,10 @@ import (
 )
 
 type Handler struct {
-	strategy                          int
+	cacheNamespace                    string
 	commonUpstreams, specialUpstreams []*model.Upstream
 	builtInCache                      cache.Cache
+	customRecords                     map[string][]dns.RR
 	filter                            filter.Matcher
 	logger                            logger.Logger
 	stats                             stats.StatsRecorder
@@ -29,7 +31,17 @@ type Handler struct {
 // SetFilter installs an immutable filter before the handler begins serving.
 func (h *Handler) SetFilter(f filter.Matcher) { h.filter = f }
 
-func NewHandler(strategy int, builtInCache bool,
+// SetCustomRecords validates and installs immutable overrides before serving requests.
+func (h *Handler) SetCustomRecords(records []model.CustomRecord) error {
+	compiled, err := model.CompileCustomRecords(records)
+	if err != nil {
+		return err
+	}
+	h.customRecords = compiled
+	return nil
+}
+
+func NewHandler(builtInCache bool,
 	upstreams []*model.Upstream,
 	dataPath string,
 	log logger.Logger,
@@ -57,7 +69,7 @@ func NewHandler(strategy int, builtInCache bool,
 		}
 	}
 	return &Handler{
-		strategy:         strategy,
+		cacheNamespace:   upstreamCacheNamespace(upstreams),
 		commonUpstreams:  commonUpstreams,
 		specialUpstreams: specialUpstreams,
 		builtInCache:     c,
@@ -138,34 +150,47 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
 
-	var msgs []*dns.Msg
-
-	switch h.strategy {
-	case model.StrategyFullest:
-		msgs = h.getTheFullestResults(req)
-	case model.StrategyFastest:
-		msgs = h.getTheFastestResults(req)
-	case model.StrategyAnyResult:
-		msgs = h.getAnyResult(req)
+	// Each worker owns its request and sends once to a buffered channel. Late
+	// replies cannot mutate the selected response or block after the caller returns.
+	upstreams := h.matchedUpstreams(req)
+	replies := make(chan *dns.Msg, len(upstreams))
+	for _, upstream := range upstreams {
+		query := req.Copy()
+		go func(up *model.Upstream) {
+			msg, _, err := up.Exchange(query)
+			valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
+				(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
+			if h.stats != nil {
+				h.stats.RecordUpstreamQuery(up.Address, !valid)
+			}
+			if !valid {
+				msg = nil
+			}
+			replies <- msg
+		}(upstream)
 	}
-
-	// DNS responses are indivisible: merging answers from different upstreams
-	// can mix incompatible RCODEs, CNAME chains, and DNSSEC signatures.
-	var best *dns.Msg
-	for _, msg := range msgs {
-		if msg == nil {
-			continue
+	for range upstreams {
+		if msg := <-replies; msg != nil {
+			return msg
 		}
-		if best == nil || (msg.Rcode == dns.RcodeSuccess && best.Rcode != dns.RcodeSuccess) ||
-			(msg.Rcode == best.Rcode && len(msg.Answer) > 0 && len(best.Answer) == 0) ||
-			(h.strategy == model.StrategyFullest && msg.Rcode == best.Rcode && len(msg.Answer) > len(best.Answer)) {
-			best = msg
-		}
 	}
-	if best == nil {
-		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+	return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+}
+
+func upstreamCacheNamespace(upstreams []*model.Upstream) string {
+	type policy struct {
+		Address string
+		Socks   bool
+		Match   []string
+		ECS     string
 	}
-	return best
+	policies := make([]policy, 0, len(upstreams))
+	for _, up := range upstreams {
+		policies = append(policies, policy{up.Address, up.ProxyEnabled, up.Match, up.EffectiveECS()})
+	}
+	encoded, _ := json.Marshal(policies)
+	// Cache namespaces isolate answers produced by different ECS and upstream policies.
+	return fmt.Sprintf("ecs-v1:%x:", sha256.Sum256(encoded))
 }
 
 func getDnsRequestCacheKey(m *dns.Msg) string {
@@ -175,13 +200,7 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 		if o.Do() {
 			dnssec = "DO"
 		}
-		// 服务多区域的公共dns使用
-		// for _, s := range o.Option {
-		// 	switch e := s.(type) {
-		// 	case *dns.EDNS0_SUBNET:
-		// 		edns = e.Address.String()
-		// 	}
-		// }
+
 	}
 	return fmt.Sprintf("%s#%d#%d#%t#%s", strings.ToLower(model.GetDomainNameFromDnsMsg(m)), m.Question[0].Qtype, m.Question[0].Qclass, m.CheckingDisabled, dnssec)
 }
@@ -335,6 +354,22 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	if req.Response || req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 {
 		return new(dns.Msg).SetRcodeFormatError(req)
 	}
+	// Local overrides take precedence over filtering and caches. A configured
+	// owner is never forwarded, including queries for types absent locally.
+	if records, exists := h.customRecords[strings.ToLower(dns.Fqdn(req.Question[0].Name))]; exists && req.Question[0].Qclass == dns.ClassINET {
+		resp := new(dns.Msg).SetReply(req)
+		resp.RecursionAvailable = true
+		for _, rr := range records {
+			if req.Question[0].Qtype == dns.TypeANY || rr.Header().Rrtype == req.Question[0].Qtype || rr.Header().Rrtype == dns.TypeCNAME {
+				resp.Answer = append(resp.Answer, dns.Copy(rr))
+			}
+		}
+		if h.stats != nil {
+			h.stats.RecordClientQuery(clientIP, domain)
+		}
+		setResponseEDNS(req, resp)
+		return resp
+	}
 	if h.filter != nil && h.filter.Blocked(req.Question[0].Name) {
 		if h.stats != nil {
 			h.stats.RecordBlockedQuery(clientIP, domain)
@@ -353,7 +388,7 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	var cacheKey string
 	var respCache *dns.Msg
 	if h.builtInCache != nil {
-		cacheKey = getDnsRequestCacheKey(req)
+		cacheKey = h.cacheNamespace + getDnsRequestCacheKey(req)
 		if v, ok := h.builtInCache.Get(cacheKey); ok {
 			if h.stats != nil {
 				h.stats.RecordCacheHit()
@@ -499,241 +534,6 @@ func truncateUDP(req, resp *dns.Msg) {
 
 // uniqueAnswer 去除重复的 DNS 资源记录
 // 基于域名、类型和记录数据进行去重，比字符串分割更高效和可靠
-func uniqueAnswer(records []dns.RR) []dns.RR {
-	if len(records) == 0 {
-		return records
-	}
-
-	seen := make(map[string]bool, len(records))
-	result := make([]dns.RR, 0, len(records))
-
-	for _, rr := range records {
-		if rr == nil {
-			continue
-		}
-
-		header := rr.Header()
-		if header == nil {
-			continue
-		}
-
-		// 构造唯一键：域名 + 类型 + 记录数据
-		// 使用 strings.Builder 优化字符串拼接性能
-		var builder strings.Builder
-		builder.Grow(128) // Pre-allocate reasonable capacity
-
-		var key string
-		switch v := rr.(type) {
-		case *dns.A:
-			builder.WriteString(header.Name)
-			builder.WriteString("|A|")
-			builder.WriteString(v.A.String())
-			key = builder.String()
-		case *dns.AAAA:
-			builder.WriteString(header.Name)
-			builder.WriteString("|AAAA|")
-			builder.WriteString(v.AAAA.String())
-			key = builder.String()
-		case *dns.CNAME:
-			builder.WriteString(header.Name)
-			builder.WriteString("|CNAME|")
-			builder.WriteString(v.Target)
-			key = builder.String()
-		case *dns.MX:
-			builder.WriteString(header.Name)
-			builder.WriteString("|MX|")
-			builder.WriteString(fmt.Sprintf("%d|%s", v.Preference, v.Mx))
-			key = builder.String()
-		case *dns.NS:
-			builder.WriteString(header.Name)
-			builder.WriteString("|NS|")
-			builder.WriteString(v.Ns)
-			key = builder.String()
-		case *dns.PTR:
-			builder.WriteString(header.Name)
-			builder.WriteString("|PTR|")
-			builder.WriteString(v.Ptr)
-			key = builder.String()
-		case *dns.TXT:
-			builder.WriteString(header.Name)
-			builder.WriteString("|TXT|")
-			builder.WriteString(strings.Join(v.Txt, "|"))
-			key = builder.String()
-		case *dns.SRV:
-			builder.WriteString(header.Name)
-			builder.WriteString("|SRV|")
-			builder.WriteString(fmt.Sprintf("%d|%d|%d|%s", v.Priority, v.Weight, v.Port, v.Target))
-			key = builder.String()
-		case *dns.SOA:
-			builder.WriteString(header.Name)
-			builder.WriteString("|SOA|")
-			builder.WriteString(v.Ns)
-			builder.WriteString("|")
-			builder.WriteString(v.Mbox)
-			key = builder.String()
-		default:
-			// 对于其他类型，回退到完整字符串表示
-			key = rr.String()
-		}
-
-		if !seen[key] {
-			seen[key] = true
-			result = append(result, rr)
-		}
-	}
-
-	return result
-}
-
-func (h *Handler) getTheFullestResults(req *dns.Msg) []*dns.Msg {
-	matchedUpstreams := h.matchedUpstreams(req)
-	var wg sync.WaitGroup
-	wg.Add(len(matchedUpstreams))
-	msgs := make([]*dns.Msg, len(matchedUpstreams))
-
-	for i := 0; i < len(matchedUpstreams); i++ {
-		go func(j int) {
-			defer wg.Done()
-			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
-
-			// 记录上游服务器统计
-			if h.stats != nil {
-				h.stats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
-			}
-
-			if err != nil {
-				h.logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
-				return
-			}
-			if validUpstreamReply(req, msg) && matchedUpstreams[j].IsValidMsg(msg) {
-				msgs[j] = msg
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	return msgs
-}
-
-func (h *Handler) getTheFastestResults(req *dns.Msg) []*dns.Msg {
-	preferUpstreams := h.matchedUpstreams(req)
-	msgs := make([]*dns.Msg, len(preferUpstreams))
-
-	var mutex sync.Mutex
-	var finishedCount int
-	var finished bool
-	var freedomIndex, primaryIndex []int
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	for i := 0; i < len(preferUpstreams); i++ {
-		go func(j int) {
-			msg, _, err := preferUpstreams[j].Exchange(req.Copy())
-
-			// 记录上游服务器统计
-			if h.stats != nil {
-				h.stats.RecordUpstreamQuery(preferUpstreams[j].Address, err != nil)
-			}
-
-			if err != nil {
-				h.logger.Printf("upstream error %s: %v %s", preferUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
-			}
-
-			mutex.Lock()
-			defer mutex.Unlock()
-
-			finishedCount++
-			// 已经结束直接退出
-			if finished {
-				return
-			}
-
-			if err == nil && validUpstreamReply(req, msg) {
-				if preferUpstreams[j].IsValidMsg(msg) {
-					if preferUpstreams[j].IsPrimary {
-						primaryIndex = append(primaryIndex, j)
-					} else {
-						freedomIndex = append(freedomIndex, j)
-					}
-					msgs[j] = msg
-				} else if preferUpstreams[j].IsPrimary {
-					// 策略：国内 DNS 返回了 国外 服务器，计数但是不记入结果，以 国外 DNS 为准
-					primaryIndex = append(primaryIndex, j)
-				}
-			}
-
-			// 全部结束直接退出
-			if finishedCount == len(preferUpstreams) {
-				finished = true
-				wg.Done()
-				return
-			}
-			// 两组 DNS 都有一个返回结果，退出
-			if len(primaryIndex) > 0 && len(freedomIndex) > 0 {
-				finished = true
-				wg.Done()
-				return
-			}
-			// 满足任一条件退出
-			//  - 国内 DNS 返回了 国内 服务器
-			//  - 国内 DNS 返回国外服务器 且 国外 DNS 有可用结果
-			if len(primaryIndex) > 0 && (msgs[primaryIndex[0]] != nil || len(freedomIndex) > 0) {
-				finished = true
-				wg.Done()
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	return msgs
-}
-
-func (h *Handler) getAnyResult(req *dns.Msg) []*dns.Msg {
-	matchedUpstreams := h.matchedUpstreams(req)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	msgs := make([]*dns.Msg, len(matchedUpstreams))
-	var mutex sync.Mutex
-	var finishedCount int
-	var finished bool
-
-	for i := 0; i < len(matchedUpstreams); i++ {
-		go func(j int) {
-			msg, _, err := matchedUpstreams[j].Exchange(req.Copy())
-
-			// 记录上游服务器统计
-			if h.stats != nil {
-				h.stats.RecordUpstreamQuery(matchedUpstreams[j].Address, err != nil)
-			}
-
-			if err != nil {
-				h.logger.Printf("upstream error %s: %v %s", matchedUpstreams[j].Address, model.GetDomainNameFromDnsMsg(req), err)
-			}
-			mutex.Lock()
-			defer mutex.Unlock()
-
-			finishedCount++
-			if finished {
-				return
-			}
-
-			// 已结束或任意上游返回成功时退出
-			if (err == nil && validUpstreamReply(req, msg)) || finishedCount == len(matchedUpstreams) {
-				finished = true
-				if err == nil && validUpstreamReply(req, msg) {
-					msgs[j] = msg
-				}
-				wg.Done()
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	return msgs
-}
-
 // Close properly shuts down the cache
 func (h *Handler) Close() error {
 	if h.builtInCache != nil {

@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NbDNS configuration",
+  "description": "配置契约；JSON Schema 不自动注入默认值。程序还会验证 CIDR、IP 和地址有效性。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "serve_addr",
+    "upstreams"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "编辑器使用的 Schema 路径；运行时忽略。"
+    },
+    "serve_addr": {
+      "$ref": "#/$defs/listenAddress",
+      "description": "TCP/UDP DNS 监听地址，示例 127.0.0.1:8853。"
+    },
+    "web_addr": {
+      "$ref": "#/$defs/listenAddress",
+      "default": "0.0.0.0:8854",
+      "description": "Web 管理面板与 HTTP DoH 监听地址；公网使用需 HTTPS 反向代理。"
+    },
+    "ecs": {
+      "type": "string",
+      "description": "IPv4/IPv6 CIDR；空字符串不发送 ECS。CIDR 语义由程序验证，发送前将主机位归零。",
+      "pattern": "^$|^[0-9A-Fa-f:.]+/[0-9]{1,3}$",
+      "default": ""
+    },
+    "socks_proxy": {
+      "type": "string",
+      "default": "",
+      "description": "全局 SOCKS5 代理 host:port（IPv6 使用 [地址]:端口），不带协议前缀；未启用代理时可留空。",
+      "pattern": "^$|^(?:\\[[0-9A-Fa-f:]+\\]|[^\\s/:]+):[0-9]{1,5}$"
+    },
+    "bootstrap": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/bootstrap"
+      },
+      "description": "解析上游主机名的引导 DNS；连接使用主机名的上游时需要配置，IP 上游可省略。ECS 继承规则与普通上游相同。"
+    },
+    "upstreams": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/upstream"
+      },
+      "description": "所有匹配上游竞速，最快有效 NOERROR/NXDOMAIN 应答胜出。"
+    },
+    "doh_server": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "username": {
+          "type": "string",
+          "default": ""
+        },
+        "password": {
+          "type": "string",
+          "default": "",
+          "writeOnly": true
+        }
+      },
+      "description": "省略或 null 关闭入站 DoH；对象启用 /dns-query；仅 username 和 password 都非空时启用 Basic Auth。不是上游 DNS 凭据。"
+    },
+    "filter_lists": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "本地过滤文件或 HTTPS 订阅 URL；相对文件路径基于 data 目录。"
+    },
+    "filter_update_interval_hours": {
+      "type": "integer",
+      "default": 24,
+      "description": "订阅刷新间隔（小时）；0 使用 24 小时，负值关闭周期刷新。"
+    },
+    "debug": {
+      "type": "boolean",
+      "default": false
+    },
+    "profiling": {
+      "type": "boolean",
+      "default": false,
+      "description": "启用性能分析端点；不要暴露至不可信网络。"
+    },
+    "built_in_cache": {
+      "type": "boolean",
+      "default": false,
+      "description": "启用 Badger 持久缓存与有界内存热缓存。"
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 4,
+      "description": "上游超时（秒），0 使用默认值。"
+    },
+    "max_active_connections": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 50,
+      "description": "每个连接池最大活跃连接数，0 使用默认值。"
+    },
+    "max_idle_connections": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 20,
+      "description": "每个连接池最大空闲连接数，0 使用默认值。"
+    },
+    "stats_save_interval": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 5,
+      "description": "统计保存间隔（分钟），0 使用默认值。"
+    },
+    "custom_records": {
+      "type": "array",
+      "default": [],
+      "description": "精确域名本地覆盖；优先于过滤、缓存和上游。缺失查询类型返回 NOERROR 空答案。仅用于 IN 查询。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type",
+          "value",
+          "ttl"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\s*]+$",
+            "description": "精确域名，忽略大小写及末尾点；不支持通配符。"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "A",
+              "AAAA",
+              "CNAME",
+              "TXT",
+              "MX",
+              "SRV",
+              "PTR",
+              "NS"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^[^\\r\\n]*$",
+            "description": "DNS 文本格式 RDATA。域名目标建议带末尾点；TXT 字符串使用双引号。"
+          },
+          "ttl": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295,
+            "description": "返回记录的 TTL，单位秒；0 不缓存。"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ecsCIDR": {
+      "type": "string",
+      "description": "IPv4/IPv6 CIDR；空字符串不发送 ECS。CIDR 语义由程序验证，发送前将主机位归零。",
+      "pattern": "^$|^[0-9A-Fa-f:.]+/[0-9]{1,3}$"
+    },
+    "listenAddress": {
+      "type": "string",
+      "pattern": "^(?:\\[[0-9A-Fa-f:]+\\]|[^\\s/:]*):[0-9]{1,5}$"
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "address"
+      ],
+      "properties": {
+        "address": {
+          "type": "string",
+          "pattern": "^(https://[^\\s]+|(?:udp|tcp|tcp-tls)://(?:\\[[0-9A-Fa-f:]+\\]|[^\\s/:]+):[0-9]{1,5})$",
+          "description": "DNS 上游地址。HTTPS 使用完整 DoH URL；UDP/TCP/DoT 必须显式指定端口。"
+        },
+        "proxy_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "通过全局 socks_proxy 指定的 SOCKS5 代理连接；不支持 UDP。"
+        },
+        "ecs": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ecsCIDR"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "省略或 null 继承全局 ecs；空字符串禁用；CIDR 覆盖全局。"
+        },
+        "match": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "a.com 仅匹配根域名；.a.com 匹配子域名；. 匹配所有。命中专用上游后不使用默认上游。"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "proxy_enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "proxy_enabled"
+            ]
+          },
+          "then": {
+            "properties": {
+              "address": {
+                "pattern": "^(tcp|tcp-tls|https)://"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bootstrap": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/upstream"
+        },
+        {
+          "properties": {
+            "address": {
+              "pattern": "^(udp|tcp|tcp-tls)://(?:[0-9]{1,3}(?:\\.[0-9]{1,3}){3}|\\[[0-9A-Fa-f:]+\\]):[0-9]{1,5}$",
+              "description": "当前引导 DNS 必须使用 IP 字面量和显式端口，支持 UDP/TCP/DoT。"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "upstreams": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "proxy_enabled"
+                  ],
+                  "properties": {
+                    "proxy_enabled": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "upstreams"
+            ]
+          },
+          {
+            "properties": {
+              "bootstrap": {
+                "contains": {
+                  "type": "object",
+                  "required": [
+                    "proxy_enabled"
+                  ],
+                  "properties": {
+                    "proxy_enabled": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "bootstrap"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "socks_proxy"
+        ],
+        "properties": {
+          "socks_proxy": {
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ]
+}

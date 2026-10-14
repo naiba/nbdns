@@ -9,10 +9,8 @@ require (
 	github.com/miekg/dns v1.1.62
 	github.com/pkg/errors v0.9.1
 	github.com/rhysd/go-github-selfupdate v1.2.3
-	github.com/yl2chen/cidranger v1.0.2
 	go.uber.org/atomic v1.11.0
 	golang.org/x/net v0.55.0
-	golang.org/x/text v0.37.0
 )
 
 require (
@@ -39,4 +37,5 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
+	gopkg.in/yaml.v2 v2.2.2 // indirect
 )

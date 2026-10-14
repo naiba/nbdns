@@ -15,6 +15,7 @@
 # vendor/
 /data/*
 !/data/config.json.example
+!/data/config.schema.json
 /main
 /nbdns
 /debug

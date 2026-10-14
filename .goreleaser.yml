@@ -43,6 +43,8 @@ archives:
     files:
       - LICENSE
       - README.md
+      - README_zh.md
+      - doc/release-v2.0.0.md
       - data
 dockers_v2:
   - images:
@@ -70,3 +72,11 @@ changelog:
       - Merge pull request
       - Merge branch
       - go mod tidy
+
+release:
+  header: |
+    ## v2.0.0 — ECS and local DNS overrides
+
+    **Breaking configuration changes:** v1 configurations are not compatible. Prepare the new configuration before upgrading. Existing installations may automatically download this release and restart.
+
+    See [release notes](https://github.com/naiba/nbdns/blob/v2.0.0/doc/release-v2.0.0.md) and the [configuration schema](https://github.com/naiba/nbdns/blob/v2.0.0/data/config.schema.json).

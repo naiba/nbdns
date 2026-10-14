@@ -5,20 +5,17 @@ import (
 	"errors"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/blang/semver"
 	"github.com/miekg/dns"
 	"github.com/rhysd/go-github-selfupdate/selfupdate"
-	"github.com/yl2chen/cidranger"
 
 	"github.com/naiba/nbdns/internal/filter"
 	"github.com/naiba/nbdns/internal/handler"
@@ -39,13 +36,11 @@ var (
 func main() {
 	dataPath = detectDataPath()
 
-	ipRanger := loadIPRanger(dataPath + "china_ip_list.txt")
-
 	// 先创建一个临时 logger 用于读取配置
 	tempLogger := logger.New(false)
 
 	config = &model.Config{}
-	if err := config.ReadInConfig(dataPath+"/config.json", ipRanger, tempLogger); err != nil {
+	if err := config.ReadInConfig(dataPath+"/config.json", tempLogger); err != nil {
 		panic(err)
 	}
 
@@ -74,7 +69,7 @@ func main() {
 	}
 
 	// Bootstrap handler 不需要缓存，只是用于初始化连接
-	bootstrapHandler := handler.NewHandler(model.StrategyAnyResult, false, config.Bootstrap, dataPath, debugLogger, nil)
+	bootstrapHandler := handler.NewHandler(false, config.Bootstrap, dataPath, debugLogger, nil)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -84,7 +79,10 @@ func main() {
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
 	// 只有 upstream handler 需要缓存
-	upstreamHandler := handler.NewHandler(config.Strategy, config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
+	upstreamHandler := handler.NewHandler(config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
+	if err := upstreamHandler.SetCustomRecords(config.CustomRecords); err != nil {
+		panic(err)
+	}
 	var filterManager *filter.Manager
 	if len(config.FilterLists) > 0 {
 		var err error
@@ -119,7 +117,7 @@ func main() {
 
 	log.Println("==== DNS Server ====")
 	log.Println("端口:", config.ServeAddr)
-	log.Println("模式:", config.StrategyName())
+	log.Println("查询: 最快有效应答；ECS:", config.ECS)
 	log.Println("数据:", dataPath)
 	if config.BuiltInCache {
 		log.Println("启用 BadgerDB 持久缓存 + 有界内存热缓存（2048 条 / 约 8 MiB；非进程内存硬上限）")
@@ -254,31 +252,6 @@ func checkUpdate(checkCh <-chan struct{}, stopCh chan<- error, debugLogger logge
 	}
 }
 
-func loadIPRanger(path string) cidranger.Ranger {
-	ipRanger := cidranger.NewPCTrieRanger()
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		panic(err)
-	}
-	lines := strings.Split(string(content), "\n")
-
-	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "" {
-			continue
-		}
-		_, network, err := net.ParseCIDR(lines[i])
-		if err != nil {
-			panic(err)
-		}
-		if err := ipRanger.Insert(cidranger.NewBasicRangerEntry(*network)); err != nil {
-			panic(err)
-		}
-	}
-
-	return ipRanger
-}
-
 func detectDataPath() string {
 	ex, err := os.Executable()
 	if err != nil {
@@ -291,13 +264,10 @@ func detectDataPath() string {
 	pathList := []string{filepath.Dir(ex), pwd}
 
 	for _, path := range pathList {
-		if f, err := os.Stat(path + "/data/china_ip_list.txt"); err == nil {
-			if f.Size() == 1024*200 {
-				panic("离线IP库 china_ip_list.txt 文件损坏，请重新下载")
-			}
-			return path + "/data/"
+		if f, err := os.Stat(filepath.Join(path, "data", "config.json")); err == nil && !f.IsDir() {
+			return filepath.Join(path, "data") + string(os.PathSeparator)
 		}
 	}
 
-	panic("没有检测到IP数据 data/china_ip_list.txt")
+	panic("没有检测到配置 data/config.json")
 }

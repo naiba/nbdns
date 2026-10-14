@@ -14,7 +14,6 @@ import (
 	"github.com/naiba/nbdns/internal/model"
 	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/logger"
-	"github.com/yl2chen/cidranger"
 )
 
 func testUpstream(t *testing.T, reply func(*dns.Msg) *dns.Msg) (*model.Upstream, *atomic.Int32) {
@@ -46,7 +45,7 @@ func testUpstream(t *testing.T, reply func(*dns.Msg) *dns.Msg) (*model.Upstream,
 	t.Cleanup(server.Close)
 	config := &model.Config{Timeout: 2}
 	upstream := &model.Upstream{Address: server.URL + "/dns-query"}
-	upstream.Init(config, cidranger.NewPCTrieRanger(), logger.New(false))
+	upstream.Init(config, logger.New(false))
 	upstream.InitConnectionPool(nil)
 	return upstream, requests
 }
@@ -64,7 +63,7 @@ func TestUpstreamResponseCodeAndEDNS(t *testing.T) {
 		resp.SetEdns0(1232, false)
 		return resp
 	})
-	h := NewHandler(model.StrategyAnyResult, false, []*model.Upstream{upstream}, "", logger.New(false), nil)
+	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), nil)
 	q := testQuery("missing.example.")
 	q.SetEdns0(1232, false)
 	resp := h.HandleDnsMsg(q, "", "")
@@ -86,7 +85,7 @@ func TestNegativeCacheUsesSOATTL(t *testing.T) {
 		}}
 		return resp
 	})
-	h := NewHandler(model.StrategyAnyResult, true, []*model.Upstream{upstream}, t.TempDir(), logger.New(false), nil)
+	h := NewHandler(true, []*model.Upstream{upstream}, t.TempDir(), logger.New(false), nil)
 	t.Cleanup(func() { _ = h.Close() })
 	q := testQuery("missing.example.")
 	for i := 0; i < 2; i++ {
@@ -111,7 +110,7 @@ func TestHotCachePreservesClientID(t *testing.T) {
 		}}
 		return resp
 	})
-	h := NewHandler(model.StrategyAnyResult, true, []*model.Upstream{upstream}, t.TempDir(), logger.New(false), nil)
+	h := NewHandler(true, []*model.Upstream{upstream}, t.TempDir(), logger.New(false), nil)
 	t.Cleanup(func() { _ = h.Close() })
 	for _, id := range []uint16{123, 456, 789} {
 		q := testQuery("hot.example.")
@@ -172,18 +171,17 @@ func TestUDPResponseRespectsAdvertisedSize(t *testing.T) {
 }
 
 func TestMalformedQueryReturnsFormatError(t *testing.T) {
-	h := NewHandler(model.StrategyAnyResult, false, nil, "", logger.New(false), nil)
+	h := NewHandler(false, nil, "", logger.New(false), nil)
 	if resp := h.HandleDnsMsg(new(dns.Msg), "", ""); resp.Rcode != dns.RcodeFormatError {
 		t.Errorf("empty query Rcode = %d, want FORMERR", resp.Rcode)
 	}
 }
 
-func TestPrimaryNXDOMAINIsNotDiscarded(t *testing.T) {
+func TestNXDOMAINIsNotDiscarded(t *testing.T) {
 	upstream, _ := testUpstream(t, func(req *dns.Msg) *dns.Msg {
 		return new(dns.Msg).SetRcode(req, dns.RcodeNameError)
 	})
-	upstream.IsPrimary = true
-	h := NewHandler(model.StrategyFullest, false, []*model.Upstream{upstream}, "", logger.New(false), nil)
+	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), nil)
 	if got := h.HandleDnsMsg(testQuery("unknown.example."), "", "").Rcode; got != dns.RcodeNameError {
 		t.Errorf("Rcode = %d, want NXDOMAIN", got)
 	}
@@ -195,7 +193,7 @@ func TestMismatchedUpstreamQuestionIsRejected(t *testing.T) {
 		resp.Question[0].Name = "other.example."
 		return resp
 	})
-	h := NewHandler(model.StrategyFullest, false, []*model.Upstream{upstream}, "", logger.New(false), nil)
+	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), nil)
 	if got := h.HandleDnsMsg(testQuery("requested.example."), "", "").Rcode; got != dns.RcodeServerFailure {
 		t.Errorf("Rcode = %d, want SERVFAIL for mismatched question", got)
 	}
@@ -214,7 +212,7 @@ func TestFilterBlocksBeforeCacheAndUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	recorder := stats.NewStats()
-	h := NewHandler(model.StrategyAnyResult, false, []*model.Upstream{upstream}, "", logger.New(false), recorder)
+	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), recorder)
 	h.SetFilter(f)
 	blocked := testQuery("x.ads.example.")
 	blocked.SetEdns0(1232, false)
@@ -237,5 +235,97 @@ func TestFilterBlocksBeforeCacheAndUpstream(t *testing.T) {
 	}
 	if len(snapshot.TopDomains) != 1 || snapshot.TopDomains[0].Key != "safe.ads.example." {
 		t.Errorf("resolved domain stats = %+v", snapshot.TopDomains)
+	}
+}
+
+func TestFastestValidReplySkipsFailures(t *testing.T) {
+	for _, code := range []int{dns.RcodeServerFailure, dns.RcodeRefused} {
+		t.Run(dns.RcodeToString[code], func(t *testing.T) {
+			failed := make(chan struct{})
+			bad, _ := testUpstream(t, func(q *dns.Msg) *dns.Msg { close(failed); return new(dns.Msg).SetRcode(q, code) })
+			good, _ := testUpstream(t, func(q *dns.Msg) *dns.Msg { <-failed; return new(dns.Msg).SetRcode(q, dns.RcodeNameError) })
+			h := NewHandler(false, []*model.Upstream{bad, good}, "", logger.New(false), nil)
+			if got := h.HandleDnsMsg(testQuery("cdn.example."), "", "").Rcode; got != dns.RcodeNameError {
+				t.Fatalf("got %d, want NXDOMAIN", got)
+			}
+		})
+	}
+}
+
+func TestFastestReplyDoesNotWaitForSlowUpstream(t *testing.T) {
+	release := make(chan struct{})
+	slowStarted := make(chan struct{})
+	slow, _ := testUpstream(t, func(q *dns.Msg) *dns.Msg {
+		close(slowStarted)
+		<-release
+		return new(dns.Msg).SetRcode(q, dns.RcodeNameError)
+	})
+	fast, _ := testUpstream(t, func(q *dns.Msg) *dns.Msg { <-slowStarted; return new(dns.Msg).SetReply(q) })
+	h := NewHandler(false, []*model.Upstream{slow, fast}, "", logger.New(false), nil)
+	result := make(chan *dns.Msg, 1)
+	go func() { result <- h.HandleDnsMsg(testQuery("cdn.example."), "", "") }()
+	select {
+	case resp := <-result:
+		close(release)
+		if resp.Rcode != dns.RcodeSuccess {
+			t.Fatalf("selected slow response: %v", resp)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("waited for slow upstream")
+	}
+}
+
+func TestAllFailedUpstreamsReturnSERVFAIL(t *testing.T) {
+	bad, _ := testUpstream(t, func(q *dns.Msg) *dns.Msg { return new(dns.Msg).SetRcode(q, dns.RcodeRefused) })
+	h := NewHandler(false, []*model.Upstream{bad}, "", logger.New(false), nil)
+	if got := h.HandleDnsMsg(testQuery("cdn.example."), "", "").Rcode; got != dns.RcodeServerFailure {
+		t.Fatalf("got %d", got)
+	}
+}
+
+func TestECSCacheNamespaceSeparatesPolicies(t *testing.T) {
+	expectedECS := ""
+	up, requests := testUpstream(t, func(q *dns.Msg) *dns.Msg {
+		actualECS := ""
+		if opt := q.IsEdns0(); opt != nil {
+			for _, option := range opt.Option {
+				if ecs, ok := option.(*dns.EDNS0_SUBNET); ok {
+					actualECS = ecs.Address.String()
+				}
+			}
+		}
+		if actualECS != expectedECS {
+			t.Errorf("wire ECS=%q want=%q", actualECS, expectedECS)
+		}
+
+		resp := new(dns.Msg).SetReply(q)
+		resp.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: q.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}}}
+		return resp
+	})
+	directory := t.TempDir()
+	h := NewHandler(true, []*model.Upstream{up}, directory, logger.New(false), nil)
+	if resp := h.HandleDnsMsg(testQuery("cdn.example."), "", ""); resp.Rcode != dns.RcodeSuccess {
+		t.Fatal(resp)
+	}
+	firstNamespace := h.cacheNamespace
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ecs := "180.152.0.0/24"
+	expectedECS = "180.152.0.0"
+	up = &model.Upstream{Address: up.Address, ECS: &ecs}
+	up.Init(&model.Config{Timeout: 2}, logger.New(false))
+	up.InitConnectionPool(nil)
+	h = NewHandler(true, []*model.Upstream{up}, directory, logger.New(false), nil)
+	t.Cleanup(func() { _ = h.Close() })
+	if firstNamespace == h.cacheNamespace {
+		t.Fatal("ECS policy did not change cache namespace")
+	}
+	if resp := h.HandleDnsMsg(testQuery("cdn.example."), "", ""); resp.Rcode != dns.RcodeSuccess {
+		t.Fatal(resp)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("old policy cache reused: %d requests", requests.Load())
 	}
 }
