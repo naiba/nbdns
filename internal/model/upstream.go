@@ -3,9 +3,11 @@ package model
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dropbox/godropbox/net2"
@@ -159,9 +161,10 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 			MaxActiveConnections: int32(up.config.MaxActiveConnections),
 			MaxIdleConnections:   uint32(up.config.MaxIdleConnections),
 			MaxIdleTime:          &maxIdleTime,
-			DialMaxConcurrency:   20,
-			ReadTimeout:          timeout,
-			WriteTimeout:         timeout,
+			// Do not impose a hidden 20-dial ceiling below the configured active limit.
+			DialMaxConcurrency: up.config.MaxActiveConnections,
+			ReadTimeout:        timeout,
+			WriteTimeout:       timeout,
 			Dial: func(network, address string) (net.Conn, error) {
 				dialer, err := up.conntionFactory(network, address)
 				if err != nil {
@@ -217,9 +220,28 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	case "tcp", "tcp-tls":
 		conn, errGetConn := up.pool.Get(up.protocol, up.hostAndPort)
 		if errGetConn != nil {
+			up.logger.Printf("upstream pool failed: %v", errGetConn)
 			return nil, 0, errGetConn
 		}
 		resp, err = dnsExchangeWithConn(conn, req)
+		// Peers may close idle/query-limited pooled sessions. The failed exchange
+		// discards that connection; retry read-only DNS queries once, not timeouts
+		// or UPDATE messages whose effects must never be duplicated.
+		if req.Opcode == dns.OpcodeQuery && retryableClosedConnection(err) {
+			// Another idle pooled connection may also have expired. Retry on
+			// a fresh transport rather than drawing another stale pool entry.
+			fresh, dialErr := up.conntionFactory(up.protocol, up.hostAndPort)
+			err = dialErr
+			if err == nil {
+				_ = fresh.SetDeadline(time.Now().Add(time.Duration(up.config.Timeout) * time.Second))
+				co := &dns.Conn{Conn: fresh}
+				err = co.WriteMsg(req)
+				if err == nil {
+					resp, err = co.ReadMsg()
+				}
+				_ = fresh.Close()
+			}
+		}
 	default:
 		panic(fmt.Sprintf("invalid upstream protocol: %s in address %s", up.protocol, up.Address))
 	}
@@ -236,6 +258,9 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 		resp.Extra = newExtra
 	}
 
+	if err != nil {
+		up.logger.Printf("upstream exchange failed: %v", err)
+	}
 	return resp, duration, err
 }
 
@@ -301,4 +326,8 @@ func (up *Upstream) controlledECSRequest(request *dns.Msg) *dns.Msg {
 	}
 	opt.Option = append(opt.Option, &dns.EDNS0_SUBNET{Code: dns.EDNS0SUBNET, Family: family, SourceNetmask: uint8(up.ecsPrefix.Bits()), SourceScope: 0, Address: net.IP(up.ecsPrefix.Addr().AsSlice())})
 	return req
+}
+
+func retryableClosedConnection(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }

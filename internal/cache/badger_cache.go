@@ -41,6 +41,11 @@ func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 	// 针对嵌入式设备的配置；以下仅为 Badger 各组件容量，并非进程 RSS 上限。
 	// MemTable：4MB，BadgerDB 默认保持 2 个 MemTable
 	opts.MemTableSize = 4 << 20 // 4MB (内存占用 ~8MB)
+	opts.NumMemtables = 2
+	// Badger defaults double table builders at each level. Sustained unique DNS
+	// writes retain increasingly large compaction arenas despite tiny memtables.
+	// Keep on-disk tables small too; these component budgets are not an RSS cap.
+	opts.TableSizeMultiplier = 1
 
 	// ValueLog：4MB
 	opts.ValueLogFileSize = 4 << 20 // 4MB

@@ -46,6 +46,8 @@ archives:
       - README_zh.md
       - doc/release-v2.0.0.md
       - doc/release-v2.0.1.md
+      - doc/release-v2.0.2.md
+      - doc/performance-local.md
       - data
 dockers_v2:
   - images:
@@ -76,8 +78,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — lower allocation overhead
+    ## {{ .Tag }} — DNS performance and connection reliability
 
-    Faster cache-key construction and fewer filter-index allocations. No configuration changes from v2.0.0. Existing installations may automatically install this release and restart.
+    Lower request-path allocations, reliable closed TCP-session recovery, configured dial capacity and smaller cache compaction buffers. No configuration changes from v2.0.0/v2.0.1. Existing installations may automatically install this release and restart.
 
-    See [performance results and release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.1.md). v1 configurations remain incompatible with v2; prepare your configuration before upgrading.
+    See [performance results and release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.2.md). v1 configurations remain incompatible with v2; prepare your configuration before upgrading.

@@ -147,28 +147,36 @@ func (h *Handler) removeEDNS(req *dns.Msg) {
 func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	// 清理 EDNS 客户端子网信息
 	h.removeEDNS(req)
-	if len(h.matchedUpstreams(req)) == 0 {
+	upstreams := h.matchedUpstreams(req)
+	if len(upstreams) == 0 {
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
-
-	// Each worker owns its request and sends once to a buffered channel. Late
-	// replies cannot mutate the selected response or block after the caller returns.
-	upstreams := h.matchedUpstreams(req)
+	exchange := func(up *model.Upstream, query *dns.Msg) *dns.Msg {
+		msg, _, err := up.Exchange(query)
+		valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
+			(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
+		if h.stats != nil {
+			h.stats.RecordUpstreamQuery(up.Address, !valid)
+		}
+		if !valid {
+			return nil
+		}
+		return msg
+	}
+	// A single upstream cannot race: avoid a channel, worker and redundant copy.
+	// Upstream.Exchange owns its ECS-controlled copy and never mutates req.
+	if len(upstreams) == 1 {
+		if msg := exchange(upstreams[0], req); msg != nil {
+			return msg
+		}
+		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+	}
+	// Racing workers retain private questions for validating late responses, even
+	// if the caller modifies its request after the fastest response returns.
 	replies := make(chan *dns.Msg, len(upstreams))
 	for _, upstream := range upstreams {
 		query := req.Copy()
-		go func(up *model.Upstream) {
-			msg, _, err := up.Exchange(query)
-			valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
-				(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
-			if h.stats != nil {
-				h.stats.RecordUpstreamQuery(up.Address, !valid)
-			}
-			if !valid {
-				msg = nil
-			}
-			replies <- msg
-		}(upstream)
+		go func(up *model.Upstream) { replies <- exchange(up, query) }(upstream)
 	}
 	for range upstreams {
 		if msg := <-replies; msg != nil {
@@ -195,6 +203,10 @@ func upstreamCacheNamespace(upstreams []*model.Upstream) string {
 }
 
 func getDnsRequestCacheKey(m *dns.Msg) string {
+	return namespacedDNSCacheKey("", m)
+}
+
+func namespacedDNSCacheKey(namespace string, m *dns.Msg) string {
 	var dnssec string
 	if o := m.IsEdns0(); o != nil {
 		// 区分 DNSSEC 请求，避免将非 DNSSEC 响应返回给需要 DNSSEC 的客户端
@@ -205,8 +217,9 @@ func getDnsRequestCacheKey(m *dns.Msg) string {
 	}
 	// Preserve the persisted key format without fmt's interface boxing and parsing.
 	name := strings.ToLower(model.GetDomainNameFromDnsMsg(m))
-	var storage [280]byte // Maximum DNS name plus numeric flags fits on the stack.
+	var storage [384]byte // Policy namespace, DNS name and flags normally fit on the stack.
 	key := storage[:0]
+	key = append(key, namespace...)
 	key = append(key, name...)
 	key = append(key, '#')
 	key = strconv.AppendUint(key, uint64(m.Question[0].Qtype), 10)
@@ -402,7 +415,7 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	var cacheKey string
 	var respCache *dns.Msg
 	if h.builtInCache != nil {
-		cacheKey = h.cacheNamespace + getDnsRequestCacheKey(req)
+		cacheKey = namespacedDNSCacheKey(h.cacheNamespace, req)
 		if v, ok := h.builtInCache.Get(cacheKey); ok {
 			if h.stats != nil {
 				h.stats.RecordCacheHit()
@@ -466,17 +479,27 @@ func restoreReplyMeta(req, resp *dns.Msg) {
 	resp.Response = true
 	resp.RecursionDesired = req.RecursionDesired
 	resp.CheckingDisabled = req.CheckingDisabled
-	resp.Question = []dns.Question{req.Question[0]}
+	// Responses are private copies. Reuse their question storage, never the request's.
+	if cap(resp.Question) > 0 {
+		resp.Question = resp.Question[:1]
+		resp.Question[0] = req.Question[0]
+	} else {
+		resp.Question = []dns.Question{req.Question[0]}
+	}
 }
 
 func setResponseEDNS(req, resp *dns.Msg) {
 	// OPT is transaction metadata (RFC 6891); do not reuse an upstream OPT.
-	var extras []dns.RR
+	// The response belongs to this request; compact in place and release discarded
+	// references so the backing slice does not retain stale records.
+	originalExtras := resp.Extra
+	extras := originalExtras[:0]
 	for _, rr := range resp.Extra {
 		if rr.Header().Rrtype != dns.TypeOPT {
 			extras = append(extras, rr)
 		}
 	}
+	clear(originalExtras[len(extras):])
 	resp.Extra = extras
 	if opt := req.IsEdns0(); opt != nil {
 		resp.SetEdns0(min(opt.UDPSize(), 1232), opt.Do())
@@ -575,7 +598,8 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 
 	// 辅助函数：更新 RR 列表的 TTL，并检测过期 RRSIG
 	updateRRs := func(rrs []dns.RR) []dns.RR {
-		var validRRs []dns.RR
+		// Only called on a private cached-message copy; shared cache entries stay immutable.
+		validRRs := rrs[:0]
 		for _, rr := range rrs {
 			header := rr.Header()
 			if header == nil {
@@ -594,6 +618,7 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 			header.Ttl = min(header.Ttl, ttl)
 			validRRs = append(validRRs, rr)
 		}
+		clear(rrs[len(validRRs):])
 		return validRRs
 	}
 
@@ -602,7 +627,8 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 	resp.Ns = updateRRs(resp.Ns)
 
 	// Extra 部分需要特殊处理 OPT RR
-	var validExtra []dns.RR
+	originalExtra := resp.Extra
+	validExtra := originalExtra[:0]
 	var reqOpt *dns.OPT
 	if reqOpt = req.IsEdns0(); reqOpt != nil {
 		// 客户端有 EDNS0，获取其 UDP size
@@ -639,6 +665,7 @@ func replyUpdateTtl(req *dns.Msg, resp *dns.Msg, ttl uint32) *dns.Msg {
 			validExtra = append(validExtra, rr)
 		}
 	}
+	clear(originalExtra[len(validExtra):])
 	resp.Extra = validExtra
 
 	// SetReply resets RCODE to NOERROR; preserve the cached response.
