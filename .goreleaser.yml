@@ -47,7 +47,9 @@ archives:
       - doc/release-v2.0.0.md
       - doc/release-v2.0.1.md
       - doc/release-v2.0.2.md
+      - doc/release-v2.0.3.md
       - doc/performance-local.md
+      - doc/upstream-concurrency-performance.md
       - data
 dockers_v2:
   - images:
@@ -78,8 +80,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — DNS performance and connection reliability
+    ## {{ .Tag }} — Bounded DNS concurrency and reusable DoH connections
 
-    Lower request-path allocations, reliable closed TCP-session recovery, configured dial capacity and smaller cache compaction buffers. No configuration changes from v2.0.0/v2.0.1. Existing installations may automatically install this release and restart.
+    Coalesce duplicate DNS cache misses, cancel losing upstream queries, and improve DoH connection reuse and HTTP/2 negotiation. The new max_concurrent_queries setting defaults to 64; excess cache misses return SERVFAIL or eligible stale data, while cache hits and local answers bypass the limit. Inbound TLS remains the responsibility of the front-end proxy. Existing installations may automatically install this release and restart.
 
-    See [performance results and release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.2.md). v1 configurations remain incompatible with v2; prepare your configuration before upgrading.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.3.md) and [local validation results](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/upstream-concurrency-performance.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

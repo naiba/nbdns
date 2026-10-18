@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"github.com/naiba/nbdns/pkg/logger"
 	"os"
 	"path/filepath"
@@ -36,5 +37,30 @@ func TestConfigECSValidation(t *testing.T) {
 				t.Fatal("global ECS not normalized/inherited")
 			}
 		})
+	}
+}
+
+func TestConfigQueryConcurrencyLimit(t *testing.T) {
+	for _, tc := range []struct {
+		value   int
+		want    int
+		invalid bool
+	}{{0, DefaultMaxConcurrentQueries, false}, {2, 2, false}, {-1, 0, true}} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		body := fmt.Sprintf(`{"max_concurrent_queries":%d,"upstreams":[{"address":"udp://127.0.0.1:53"}]}`, tc.value)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var config Config
+		err := config.ReadInConfig(path, logger.New(false))
+		if tc.invalid {
+			if err == nil || !strings.Contains(err.Error(), "max_concurrent_queries") {
+				t.Fatalf("invalid limit accepted: %v", err)
+			}
+			continue
+		}
+		if err != nil || config.MaxConcurrentQueries != tc.want {
+			t.Fatalf("limit=%d want=%d err=%v", config.MaxConcurrentQueries, tc.want, err)
+		}
 	}
 }

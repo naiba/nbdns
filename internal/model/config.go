@@ -17,6 +17,7 @@ type DohServerConfig struct {
 }
 
 type Config struct {
+	MaxConcurrentQueries      int              `json:"max_concurrent_queries,omitempty"` // Pending cache misses, including coalesced waiters.
 	CustomRecords             []CustomRecord   `json:"custom_records,omitempty"`
 	ServeAddr                 string           `json:"serve_addr,omitempty"`
 	WebAddr                   string           `json:"web_addr,omitempty"`
@@ -62,6 +63,12 @@ func (c *Config) ReadInConfig(path string, log logger.Logger) error {
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = 4
+	}
+	if c.MaxConcurrentQueries < 0 {
+		return fmt.Errorf("max_concurrent_queries must not be negative")
+	}
+	if c.MaxConcurrentQueries == 0 {
+		c.MaxConcurrentQueries = DefaultMaxConcurrentQueries
 	}
 
 	// Set default connection pool values

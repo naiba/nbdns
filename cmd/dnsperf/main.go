@@ -46,6 +46,8 @@ func must(err error) {
 	}
 }
 
+var uniqueQueries = flag.Bool("unique-queries", false, "use unique names for uncached upstream workloads to bypass singleflight")
+
 var targetDebug = flag.Bool("target-debug", false, "enable target debug logging for diagnosis, not performance comparisons")
 
 var nextPort atomic.Uint32
@@ -144,6 +146,9 @@ func main() {
 		for _, s := range cases {
 			if *only != "" && s.Name != *only {
 				continue
+			}
+			if *uniqueQueries && (s.Cache || s.Kind == "custom" || s.Kind == "blocked") {
+				panic("unique-queries requires an uncached upstream scenario")
 			}
 			for _, level := range strings.Split(*levels, ",") {
 				concurrency, e := strconv.Atoi(level)
@@ -420,7 +425,7 @@ func execute(binary, output string, s scenario, concurrency int, duration time.D
 				if s.Kind == "working_set" {
 					query.Question[0].Name = fmt.Sprintf("working%d.example.", sequence.Add(1)%100000)
 				}
-				if s.Kind == "unique" {
+				if s.Kind == "unique" || *uniqueQueries {
 					query.Question[0].Name = fmt.Sprintf("q%d.example.", sequence.Add(1))
 				}
 				t := time.Now()

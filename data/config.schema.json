@@ -167,6 +167,12 @@
           }
         }
       }
+    },
+    "max_concurrent_queries": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 64,
+      "description": "等待回源的最大并发请求数（含 singleflight 等待者）；0 使用默认值。超限返回 SERVFAIL，有可用旧缓存时按现有规则降级。缓存命中、本地记录及过滤响应不占名额。"
     }
   },
   "$defs": {

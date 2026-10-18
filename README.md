@@ -66,6 +66,9 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 | `web_addr`       | Web dashboard and DoH service port                                  | `0.0.0.0:8854` |
 | `ecs` | Global ECS CIDR inherited by upstreams | Empty (no ECS) |
 | `timeout`        | Upstream timeout in seconds                                         | `4`            |
+| `max_concurrent_queries` | Maximum pending cache misses, including coalesced waiters; overload returns SERVFAIL or eligible stale cache | `64` |
+| `max_active_connections` | Maximum active connections per TCP/DoT pool or DoH upstream | `50` |
+| `max_idle_connections` | Maximum idle connections per TCP/DoT pool or DoH upstream | `20` |
 | `built_in_cache` | Enable persistent Badger cache and in-memory hot cache              | `false`        |
 | `socks_proxy`    | SOCKS5 proxy address                                                | Optional       |
 | `bootstrap`      | Bootstrap DNS servers (IP only)                                     | Required       |

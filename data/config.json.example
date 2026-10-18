@@ -7,6 +7,7 @@
     "web_addr": "0.0.0.0:8854",
     "socks_proxy": "",
     "built_in_cache": false,
+    "max_concurrent_queries": 64,
     "max_active_connections": 50,
     "max_idle_connections": 20,
     "stats_save_interval": 5,

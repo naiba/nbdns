@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
-	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -25,11 +24,12 @@ type Logger interface {
 }
 
 type clientOptions struct {
-	timeout   time.Duration
-	server    string
-	bootstrap func(domain string) (net.IP, error)
-	getDialer func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)
-	logger    Logger
+	timeout                            time.Duration
+	server                             string
+	bootstrap                          func(domain string) (net.IP, error)
+	getDialer                          func(d *net.Dialer) (proxy.Dialer, proxy.ContextDialer, error)
+	logger                             Logger
+	maxConnections, maxIdleConnections int
 }
 
 type ClientOption func(*clientOptions) error
@@ -69,14 +69,28 @@ func WithLogger(logger Logger) ClientOption {
 	}
 }
 
+// WithConnectionLimits bounds open connections and retains enough idle sessions
+// for subsequent bursts against the same resolver.
+func WithConnectionLimits(active, idle int) ClientOption {
+	return func(o *clientOptions) error {
+		if active > 0 {
+			o.maxConnections = active
+		}
+		if idle > 0 {
+			o.maxIdleConnections = idle
+		}
+		return nil
+	}
+}
+
 type Client struct {
-	opt      *clientOptions
-	cli      *http.Client
-	traceCtx context.Context
+	opt   *clientOptions
+	cli   *http.Client
+	trace *httptrace.ClientTrace
 }
 
 func NewClient(opts ...ClientOption) *Client {
-	o := new(clientOptions)
+	o := &clientOptions{maxConnections: 50, maxIdleConnections: 20}
 	for _, f := range opts {
 		f(o)
 	}
@@ -89,38 +103,42 @@ func NewClient(opts ...ClientOption) *Client {
 		},
 	}
 
-	var transport http.RoundTripper = http.DefaultTransport
-
-	if o.bootstrap != nil {
-		transport = &http.Transport{
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				urls := strings.Split(address, ":")
-				ipv4, err := o.bootstrap(urls[0])
+	// A custom dialer disables automatic HTTP/2 unless explicitly enabled.
+	// Keep more than the default two idle HTTP/1 connections: otherwise every
+	// concurrent burst repeats TCP/TLS setup even with keep-alive enabled.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ForceAttemptHTTP2 = true
+	transport.MaxConnsPerHost = o.maxConnections
+	transport.MaxIdleConnsPerHost = min(o.maxIdleConnections, o.maxConnections)
+	transport.MaxIdleConns = transport.MaxIdleConnsPerHost
+	if o.bootstrap != nil || o.getDialer != nil {
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			if o.bootstrap != nil && net.ParseIP(host) == nil {
+				ip, err := o.bootstrap(host)
 				if err != nil {
 					return nil, errors.Wrap(err, "bootstrap")
 				}
-				urls[0] = ipv4.String()
-
-				if o.getDialer != nil {
-					dialer, _, err := o.getDialer(&net.Dialer{
-						Timeout: o.timeout,
-					})
-					if err != nil {
-						return nil, err
-					}
-					return dialer.Dial("tcp", strings.Join(urls, ":"))
+				address = net.JoinHostPort(ip.String(), port)
+			}
+			dialer := &net.Dialer{Timeout: o.timeout}
+			if o.getDialer != nil {
+				_, proxyDialer, err := o.getDialer(dialer)
+				if err != nil {
+					return nil, err
 				}
-
-				return (&net.Dialer{
-					Timeout: o.timeout,
-				}).DialContext(ctx, network, strings.Join(urls, ":"))
-			},
+				return proxyDialer.DialContext(ctx, "tcp", address)
+			}
+			return dialer.DialContext(ctx, network, address)
 		}
 	}
 
 	return &Client{
-		opt:      o,
-		traceCtx: httptrace.WithClientTrace(context.Background(), clientTrace),
+		opt:   o,
+		trace: clientTrace,
 		cli: &http.Client{
 			Transport: transport,
 			Timeout:   o.timeout,
@@ -128,7 +146,11 @@ func NewClient(opts ...ClientOption) *Client {
 	}
 }
 
-func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err error) {
+func (c *Client) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	return c.ExchangeContext(context.Background(), req)
+}
+
+func (c *Client) ExchangeContext(ctx context.Context, req *dns.Msg) (r *dns.Msg, rtt time.Duration, err error) {
 	var (
 		buf    []byte
 		begin  = time.Now()
@@ -137,13 +159,14 @@ func (c *Client) Exchange(req *dns.Msg) (r *dns.Msg, rtt time.Duration, err erro
 	)
 
 	// Set DNS ID as zero accoreding to RFC8484 (cache friendly)
-	req.Id = 0
-	buf, err = req.Pack()
+	query := *req
+	query.Id = 0
+	buf, err = query.Pack()
 	if err != nil {
 		return
 	}
 
-	hreq, err = http.NewRequestWithContext(c.traceCtx, http.MethodGet, c.opt.server+"?dns="+base64.RawURLEncoding.EncodeToString(buf), nil)
+	hreq, err = http.NewRequestWithContext(httptrace.WithClientTrace(ctx, c.trace), http.MethodGet, c.opt.server+"?dns="+base64.RawURLEncoding.EncodeToString(buf), nil)
 	if err != nil {
 		return
 	}

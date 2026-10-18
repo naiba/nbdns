@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -86,6 +87,15 @@ func (up *Upstream) Validate() error {
 }
 
 func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
+	return up.dialUpstreamContext(context.Background(), network, address)
+}
+
+func (up *Upstream) dialUpstreamContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if up.config.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(up.config.Timeout)*time.Second)
+		defer cancel()
+	}
 	up.logger.Printf("connecting to %s://%s", network, address)
 
 	host, port, err := net.SplitHostPort(address)
@@ -103,7 +113,7 @@ func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
 	}
 
 	if up.ProxyEnabled {
-		d, _, err := up.config.GetDialerContext(&net.Dialer{
+		_, d, err := up.config.GetDialerContext(&net.Dialer{
 			Timeout: time.Second * time.Duration(up.config.Timeout),
 		})
 		if err != nil {
@@ -111,26 +121,27 @@ func (up *Upstream) conntionFactory(network, address string) (net.Conn, error) {
 		}
 		switch network {
 		case "tcp":
-			return d.Dial(network, address)
+			return d.DialContext(ctx, network, address)
 		case "tcp-tls":
-			conn, err := d.Dial("tcp", address)
+			conn, err := d.DialContext(ctx, "tcp", address)
 			if err != nil {
 				return nil, err
 			}
-			return tls.Client(conn, &tls.Config{
-				ServerName: host,
-			}), nil
+			secure := tls.Client(conn, &tls.Config{ServerName: host})
+			if err := secure.HandshakeContext(ctx); err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			return secure, nil
 		}
 	} else {
 		var d net.Dialer
 		d.Timeout = time.Second * time.Duration(up.config.Timeout)
 		switch network {
 		case "tcp":
-			return d.Dial(network, address)
+			return d.DialContext(ctx, network, address)
 		case "tcp-tls":
-			return tls.DialWithDialer(&d, "tcp", address, &tls.Config{
-				ServerName: host,
-			})
+			return (&tls.Dialer{NetDialer: &d, Config: &tls.Config{ServerName: host}}).DialContext(ctx, "tcp", address)
 		}
 	}
 
@@ -146,6 +157,7 @@ func (up *Upstream) InitConnectionPool(bootstrap func(host string) (net.IP, erro
 			doh.WithBootstrap(bootstrap),
 			doh.WithTimeout(time.Second * time.Duration(up.config.Timeout)),
 			doh.WithLogger(up.logger),
+			doh.WithConnectionLimits(up.config.MaxActiveConnections, up.config.MaxIdleConnections),
 		}
 		if up.ProxyEnabled {
 			ops = append(ops, doh.WithSocksProxy(up.config.GetDialerContext))
@@ -194,6 +206,18 @@ func (up *Upstream) poolLen() int32 {
 }
 
 func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	return up.ExchangeContext(context.Background(), req)
+}
+
+func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if up.config.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(up.config.Timeout)*time.Second)
+		defer cancel()
+	}
 	up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
 	defer up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
 
@@ -205,16 +229,16 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 
 	switch up.protocol {
 	case "https", "http":
-		resp, duration, err = up.dohClient.Exchange(req)
+		resp, duration, err = up.dohClient.ExchangeContext(ctx, req)
 	case "udp":
 		client := new(dns.Client)
 		client.Timeout = time.Second * time.Duration(up.config.Timeout)
-		resp, duration, err = client.Exchange(req, up.hostAndPort)
+		resp, duration, err = exchangeDNSContext(ctx, client, req, up.hostAndPort)
 		if err == nil && resp != nil && resp.Truncated {
 			// RFC 7766: retry a truncated UDP response over TCP.
 			tcpClient := &dns.Client{Net: "tcp", Timeout: client.Timeout}
 			var tcpRTT time.Duration
-			resp, tcpRTT, err = tcpClient.Exchange(req, up.hostAndPort)
+			resp, tcpRTT, err = exchangeDNSContext(ctx, tcpClient, req, up.hostAndPort)
 			duration += tcpRTT
 		}
 	case "tcp", "tcp-tls":
@@ -223,27 +247,33 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 			up.logger.Printf("upstream pool failed: %v", errGetConn)
 			return nil, 0, errGetConn
 		}
-		resp, err = dnsExchangeWithConn(conn, req)
+		resp, err = dnsExchangeWithConnContext(ctx, conn, req)
 		// Peers may close idle/query-limited pooled sessions. The failed exchange
 		// discards that connection; retry read-only DNS queries once, not timeouts
 		// or UPDATE messages whose effects must never be duplicated.
-		if req.Opcode == dns.OpcodeQuery && retryableClosedConnection(err) {
+		if ctx.Err() == nil && req.Opcode == dns.OpcodeQuery && retryableClosedConnection(err) {
 			// Another idle pooled connection may also have expired. Retry on
 			// a fresh transport rather than drawing another stale pool entry.
-			fresh, dialErr := up.conntionFactory(up.protocol, up.hostAndPort)
+			fresh, dialErr := up.dialUpstreamContext(ctx, up.protocol, up.hostAndPort)
 			err = dialErr
 			if err == nil {
+				stopCancellation := closeConnectionOnCancel(ctx, fresh)
 				_ = fresh.SetDeadline(time.Now().Add(time.Duration(up.config.Timeout) * time.Second))
 				co := &dns.Conn{Conn: fresh}
 				err = co.WriteMsg(req)
 				if err == nil {
 					resp, err = co.ReadMsg()
 				}
+				stopCancellation()
 				_ = fresh.Close()
 			}
 		}
 	default:
 		panic(fmt.Sprintf("invalid upstream protocol: %s in address %s", up.protocol, up.Address))
+	}
+
+	if ctx.Err() != nil {
+		return nil, duration, ctx.Err()
 	}
 
 	// 清理 EDNS 信息
@@ -265,11 +295,22 @@ func (up *Upstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 }
 
 func dnsExchangeWithConn(conn net2.ManagedConn, req *dns.Msg) (*dns.Msg, error) {
+	return dnsExchangeWithConnContext(context.Background(), conn, req)
+}
+
+func dnsExchangeWithConnContext(ctx context.Context, conn net2.ManagedConn, req *dns.Msg) (*dns.Msg, error) {
+	// Capture the raw connection before releasing its pool handle. Cancellation
+	// must finish before reuse, or it could close another query's connection.
+	stopCancellation := closeConnectionOnCancel(ctx, conn.RawConn())
 	var resp *dns.Msg
 	co := dns.Conn{Conn: conn}
 	err := co.WriteMsg(req)
 	if err == nil {
 		resp, err = co.ReadMsg()
+	}
+	stopCancellation()
+	if ctx.Err() != nil {
+		err = ctx.Err()
 	}
 	if err == nil {
 		conn.ReleaseConnection()

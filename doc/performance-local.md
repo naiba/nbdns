@@ -1,5 +1,7 @@
 # 本机端到端性能验证与优化记录
 
+原始本地压测产物已在 v2.0.3 发布准备时按要求清理。下文的 `/root/nbdns-performance/` 路径是历史记录，不再指向保留的文件；汇总结果、测试源码和复现工具仍保留。
+
 ## 环境和边界
 
 Go 1.27.2 linux/arm64；目标进程 GOMAXPROCS=2，生成器 GOMAXPROCS=2，共享 3 CPU 的 cgroup 配额。真实 NbDNS 进程、真实 UDP/TCP/HTTP DoH 请求、本机模拟上游，加载 50,000 条过滤规则，开启统计及仅本机 profiling。没有操作路由器。

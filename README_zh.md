@@ -66,6 +66,9 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 | `web_addr`       | Web 面板和 DoH 服务端口                              | `0.0.0.0:8854` |
 | `ecs` | 全局 ECS CIDR，上游未配置时继承 | 空（不发送） |
 | `timeout`        | 上游超时时间（秒）                                   | `4`            |
+| `max_concurrent_queries` | 等待回源的最大并发数，含合并请求的等待者；超限返回 SERVFAIL 或可用旧缓存 | `64` |
+| `max_active_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大连接数 | `50` |
+| `max_idle_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大空闲连接数 | `20` |
 | `built_in_cache` | 启用 Badger 持久缓存与内存热缓存                     | `false`        |
 | `socks_proxy`    | SOCKS5 代理地址                                      | 可选           |
 | `bootstrap`      | Bootstrap DNS 服务器（仅支持 IP）                    | 必填           |

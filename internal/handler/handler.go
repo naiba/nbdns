@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/naiba/nbdns/internal/cache"
 	"github.com/naiba/nbdns/internal/filter"
@@ -20,6 +22,8 @@ import (
 )
 
 type Handler struct {
+	pendingQueries                    chan struct{}
+	upstreamQueries                   singleflight.Group
 	cacheNamespace                    string
 	commonUpstreams, specialUpstreams []*model.Upstream
 	builtInCache                      cache.Cache
@@ -70,6 +74,7 @@ func NewHandler(builtInCache bool,
 		}
 	}
 	return &Handler{
+		pendingQueries:   make(chan struct{}, model.DefaultMaxConcurrentQueries),
 		cacheNamespace:   upstreamCacheNamespace(upstreams),
 		commonUpstreams:  commonUpstreams,
 		specialUpstreams: specialUpstreams,
@@ -108,7 +113,9 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	m.RecursionDesired = true
 	m.Question = make([]dns.Question, 1)
 	m.Question[0] = dns.Question{Name: host, Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	res := h.exchange(m)
+	// Bootstrap dials can arrive in a burst as well; share their DNS lookup and
+	// apply the same admission bound without introducing a persistent cache.
+	res := h.resolveCacheMiss(m, "")
 	// 取一个 IPv4 地址
 	for i := 0; i < len(res.Answer); i++ {
 		if aRecord, ok := res.Answer[i].(*dns.A); ok {
@@ -151,12 +158,12 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	if len(upstreams) == 0 {
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
-	exchange := func(up *model.Upstream, query *dns.Msg) *dns.Msg {
-		msg, _, err := up.Exchange(query)
+	exchange := func(ctx context.Context, up *model.Upstream, query *dns.Msg) *dns.Msg {
+		msg, _, err := up.ExchangeContext(ctx, query)
 		valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
 			(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
 		if h.stats != nil {
-			h.stats.RecordUpstreamQuery(up.Address, !valid)
+			h.stats.RecordUpstreamQuery(up.Address, !valid && !errors.Is(err, context.Canceled))
 		}
 		if !valid {
 			return nil
@@ -166,17 +173,21 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	// A single upstream cannot race: avoid a channel, worker and redundant copy.
 	// Upstream.Exchange owns its ECS-controlled copy and never mutates req.
 	if len(upstreams) == 1 {
-		if msg := exchange(upstreams[0], req); msg != nil {
+		if msg := exchange(context.Background(), upstreams[0], req); msg != nil {
 			return msg
 		}
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
 	// Racing workers retain private questions for validating late responses, even
 	// if the caller modifies its request after the fastest response returns.
+	// The winning answer ends the race; otherwise slow losers accumulate across
+	// subsequent cache misses even after their clients have received an answer.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	replies := make(chan *dns.Msg, len(upstreams))
 	for _, upstream := range upstreams {
 		query := req.Copy()
-		go func(up *model.Upstream) { replies <- exchange(up, query) }(upstream)
+		go func(up *model.Upstream) { replies <- exchange(ctx, up, query) }(upstream)
 	}
 	for range upstreams {
 		if msg := <-replies; msg != nil {
@@ -434,7 +445,7 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	}
 
 	// 从上游获取响应
-	resp := h.exchange(req)
+	resp := h.resolveCacheMiss(req, cacheKey)
 
 	if resp.Rcode == dns.RcodeServerFailure {
 		if h.stats != nil {
@@ -450,26 +461,8 @@ func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 			}
 		}
 	}
-	if len(resp.Answer) == 0 && (resp.Rcode == dns.RcodeNameError || resp.Rcode == dns.RcodeSuccess) {
-		for _, rr := range resp.Ns {
-			if soa, ok := rr.(*dns.SOA); ok {
-				soa.Hdr.Ttl = min(soa.Hdr.Ttl, soa.Minttl)
-			}
-		}
-	}
-
 	restoreReplyMeta(req, resp)
 	h.logger.Printf("nbdns::resp: %+v\n", resp)
-
-	// 验证响应并缓存（防止缓存投毒）
-	if h.builtInCache != nil && shouldCacheResponse(resp) && validateResponse(req, resp, h.logger) {
-		if ttl := getDnsResponseTtl(resp); ttl > 0 {
-			cachedMsg := &cache.CachedMsg{Msg: resp.Copy(), Expires: time.Now().Add(ttl)}
-			if err := h.builtInCache.Set(cacheKey, cachedMsg, ttl+time.Hour); err != nil {
-				h.logger.Printf("Failed to cache response: %v", err)
-			}
-		}
-	}
 	setResponseEDNS(req, resp)
 	return resp
 }
