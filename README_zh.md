@@ -71,7 +71,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 | `max_idle_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大空闲连接数 | `20` |
 | `built_in_cache` | 启用 Badger 持久缓存与内存热缓存                     | `false`        |
 | `socks_proxy`    | SOCKS5 代理地址                                      | 可选           |
-| `bootstrap`      | Bootstrap DNS 服务器（仅支持 IP）                    | 必填           |
+| `bootstrap` | 引导 DNS（地址使用 IP），为没有本地 A 记录覆盖的上游主机名提供解析 | 按需 |
 | `upstreams`      | 上游 DNS 列表                                        | 必填           |
 | `doh_server`     | DoH 服务配置                                         | 可选           |
 | `custom_records` | 本地 DNS 覆盖记录，优先于过滤、缓存及上游 | `[]` |
@@ -87,6 +87,20 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 - `.` 匹配所有
 - `a.com` 仅匹配 a.com
 - `.a.com` 匹配 a.a.com, c.a.com, e.d.a.com 等
+
+Bootstrap 与普通解析共用同一个内存热缓存和 Badger 持久缓存，统一由 `built_in_cache` 控制；关闭后两者均不缓存。重启后仍可复用未过期的磁盘缓存。缓存键区分上游及 ECS 策略，相同策略的结果可以互相复用。缓存寿命遵循 DNS TTL（最多一小时），TTL 为 0 或解析失败时不写入缓存；有 SOA 的否定应答按负缓存 TTL 缓存。并发重复解析仍会合并。
+
+Bootstrap 和普通 DNS 查询共用 `custom_records`，覆盖优先于缓存和上游查询。例如固定 Google DNS：
+
+```json
+{
+  "custom_records": [
+    {"name":"dns.google","type":"A","value":"8.8.8.8","ttl":300}
+  ]
+}
+```
+
+上游仍使用 `tcp-tls://dns.google:853` 或 `https://dns.google/dns-query`，保留域名证书校验和 HTTP Host。Bootstrap 当前查询 A 记录，因此固定上游地址需要 A 覆盖；仅配置 AAAA 或 CNAME 不会自动递归或回退到引导 DNS。没有覆盖的域名继续查询引导 DNS 并按 TTL 缓存。服务商地址可能变化时，应保留动态解析。
 
 ### 查询与 ECS
 
@@ -192,7 +206,7 @@ start_service() {
 
 ## 自定义解析记录
 
-`custom_records` 可配置多条记录，同域名同类型可返回多个值。精确匹配域名，忽略大小写和末尾点，不支持通配符。IN 查询命中后优先于过滤、缓存与上游直接返回；没有对应类型时返回 NOERROR 空答案，不访问上游。支持 A、AAAA、CNAME、TXT、MX、SRV、PTR、NS；`value` 使用标准 DNS 文本格式，`ttl` 单位为秒（0 表示不缓存）。CNAME 必须是该域名唯一的记录；返回别名但不递归追踪目标。仅应用于业务查询，不应用于 bootstrap。配置修改后需重启。
+`custom_records` 可配置多条记录，同域名同类型可返回多个值。精确匹配域名，忽略大小写和末尾点，不支持通配符。IN 查询命中后优先于过滤、缓存与上游直接返回；没有对应类型时返回 NOERROR 空答案，不访问上游。支持 A、AAAA、CNAME、TXT、MX、SRV、PTR、NS；`value` 使用标准 DNS 文本格式，`ttl` 单位为秒（0 表示不缓存）。CNAME 必须是该域名唯一的记录；返回别名但不递归追踪目标。普通查询和 bootstrap 共用此配置；bootstrap 使用其中的 A 记录解析上游主机名。配置修改后需重启。
 
 ```json
 {

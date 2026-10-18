@@ -68,8 +68,14 @@ func main() {
 		config.Upstreams[i].SetLogger(debugLogger)
 	}
 
-	// Bootstrap handler 不需要缓存，只是用于初始化连接
-	bootstrapHandler := handler.NewHandler(false, config.Bootstrap, dataPath, debugLogger, nil)
+	upstreamHandler := handler.NewHandler(config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
+	if err := upstreamHandler.SetMaxConcurrentQueries(config.MaxConcurrentQueries); err != nil {
+		panic(err)
+	}
+	if err := upstreamHandler.SetCustomRecords(config.CustomRecords); err != nil {
+		panic(err)
+	}
+	bootstrapHandler := upstreamHandler.NewBootstrapHandler(config.Bootstrap)
 
 	for i := 0; i < len(config.Upstreams); i++ {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
@@ -78,14 +84,6 @@ func main() {
 	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
 	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
 
-	// 只有 upstream handler 需要缓存
-	upstreamHandler := handler.NewHandler(config.BuiltInCache, config.Upstreams, dataPath, debugLogger, statsRecorder)
-	if err := upstreamHandler.SetMaxConcurrentQueries(config.MaxConcurrentQueries); err != nil {
-		panic(err)
-	}
-	if err := upstreamHandler.SetCustomRecords(config.CustomRecords); err != nil {
-		panic(err)
-	}
 	var filterManager *filter.Manager
 	if len(config.FilterLists) > 0 {
 		var err error

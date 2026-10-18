@@ -71,7 +71,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 | `max_idle_connections` | Maximum idle connections per TCP/DoT pool or DoH upstream | `20` |
 | `built_in_cache` | Enable persistent Badger cache and in-memory hot cache              | `false`        |
 | `socks_proxy`    | SOCKS5 proxy address                                                | Optional       |
-| `bootstrap`      | Bootstrap DNS servers (IP only)                                     | Required       |
+| `bootstrap` | IP-addressed DNS servers for upstream hostnames without local A overrides | As needed |
 | `upstreams`      | Upstream DNS list                                                   | Required       |
 | `doh_server`     | DoH server configuration                                           | Optional       |
 | `custom_records` | Local DNS overrides, before filters, caches and upstreams | `[]` |
@@ -87,6 +87,20 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 - `.` matches all domains
 - `a.com` matches only a.com
 - `.a.com` matches a.a.com, c.a.com, e.d.a.com, etc.
+
+Bootstrap and ordinary queries share one in-memory hot cache and one persistent Badger cache, both controlled by `built_in_cache`; disabling it disables caching for both. Unexpired disk entries remain reusable after restart. Cache keys distinguish upstream and ECS policies; matching policies can reuse each other’s answers. Entries follow DNS TTLs, capped at one hour. Zero-TTL answers and failures are not written to cache; negative answers with an SOA follow their negative TTL. Concurrent duplicate lookups are still coalesced.
+
+Bootstrap and ordinary DNS queries share `custom_records`, checked before caches and upstream requests. For example, to pin Google DNS:
+
+```json
+{
+  "custom_records": [
+    {"name":"dns.google","type":"A","value":"8.8.8.8","ttl":300}
+  ]
+}
+```
+
+Keep `tcp-tls://dns.google:853` or `https://dns.google/dns-query` as the upstream address to preserve TLS hostname verification and HTTP Host. Bootstrap currently queries A records, so pinned upstream hosts require A overrides; an AAAA-only or CNAME override neither recurses nor falls back to bootstrap servers. Names without overrides use bootstrap DNS with TTL caching. Keep dynamic resolution for providers whose addresses may change.
 
 ### Queries and ECS
 
@@ -192,7 +206,7 @@ Grant execute permission: `chmod +x /etc/init.d/nbdns`, then enable and start: `
 
 ## Custom DNS records
 
-`custom_records` supports multiple records and multiple values per owner/type. Exact names match case-insensitively, ignoring a trailing dot; wildcards are unsupported. Matched IN queries bypass filters, caches and upstreams. Missing types return NOERROR with no answers and never reach upstreams. Supported types: A, AAAA, CNAME, TXT, MX, SRV, PTR, NS. `value` uses DNS presentation syntax; `ttl` is in seconds (0 disables caching). A CNAME must be the only record at its owner and is returned without recursively resolving its target. Overrides apply to business queries, not bootstrap. Restart after configuration changes.
+`custom_records` supports multiple records and multiple values per owner/type. Exact names match case-insensitively, ignoring a trailing dot; wildcards are unsupported. Matched IN queries bypass filters, caches and upstreams. Missing types return NOERROR with no answers and never reach upstreams. Supported types: A, AAAA, CNAME, TXT, MX, SRV, PTR, NS. `value` uses DNS presentation syntax; `ttl` is in seconds (0 disables caching). A CNAME must be the only record at its owner and is returned without recursively resolving its target. Ordinary queries and bootstrap share these overrides; bootstrap uses A records to resolve upstream hostnames. Restart after configuration changes.
 
 ```json
 {

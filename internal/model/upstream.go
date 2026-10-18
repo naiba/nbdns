@@ -106,10 +106,11 @@ func (up *Upstream) dialUpstreamContext(ctx context.Context, network, address st
 	if up.bootstrap != nil && net.ParseIP(host) == nil {
 		ip, err := up.bootstrap(host)
 		if err != nil {
-			address = fmt.Sprintf("%s:%s", "0.0.0.0", port)
-		} else {
-			address = fmt.Sprintf("%s:%s", ip.String(), port)
+			// A failed lookup must not turn into a connection to 0.0.0.0,
+			// which can reach a local service instead of the intended upstream.
+			return nil, errors.Wrap(err, "bootstrap")
 		}
+		address = net.JoinHostPort(ip.String(), port)
 	}
 
 	if up.ProxyEnabled {

@@ -27,6 +27,7 @@ type Handler struct {
 	cacheNamespace                    string
 	commonUpstreams, specialUpstreams []*model.Upstream
 	builtInCache                      cache.Cache
+	borrowedCache                     bool
 	customRecords                     map[string][]dns.RR
 	filter                            filter.Matcher
 	logger                            logger.Logger
@@ -113,13 +114,14 @@ func (h *Handler) LookupIP(host string) (ip net.IP, err error) {
 	m.RecursionDesired = true
 	m.Question = make([]dns.Question, 1)
 	m.Question[0] = dns.Question{Name: host, Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	// Bootstrap dials can arrive in a burst as well; share their DNS lookup and
-	// apply the same admission bound without introducing a persistent cache.
-	res := h.resolveCacheMiss(m, "")
+	// Use the normal per-question TTL cache before coalescing misses. Bypassing
+	// this path repeats bootstrap traffic on each reconnect (or aliases all hosts
+	// under an empty cache key when caching is enabled).
+	res := h.HandleDnsMsg(m, "", "")
 	// 取一个 IPv4 地址
 	for i := 0; i < len(res.Answer); i++ {
 		if aRecord, ok := res.Answer[i].(*dns.A); ok {
-			ip = aRecord.A
+			ip = append(net.IP(nil), aRecord.A...)
 		}
 	}
 	// 选取最后一个（一般是备用，存活率高一些）
@@ -566,7 +568,7 @@ func truncateUDP(req, resp *dns.Msg) {
 // 基于域名、类型和记录数据进行去重，比字符串分割更高效和可靠
 // Close properly shuts down the cache
 func (h *Handler) Close() error {
-	if h.builtInCache != nil {
+	if h.builtInCache != nil && !h.borrowedCache {
 		return h.builtInCache.Close()
 	}
 	return nil

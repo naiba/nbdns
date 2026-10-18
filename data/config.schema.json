@@ -40,7 +40,7 @@
       "items": {
         "$ref": "#/$defs/bootstrap"
       },
-      "description": "解析上游主机名的引导 DNS；连接使用主机名的上游时需要配置，IP 上游可省略。ECS 继承规则与普通上游相同。"
+      "description": "解析上游主机名的引导 DNS；优先使用 custom_records 中的 A 记录覆盖，未覆盖时查询引导 DNS；与普通解析共用 built_in_cache 控制的内存热缓存和 Badger 持久缓存，缓存键区分上游及 ECS 策略。IP 上游或主机名均有 A 记录覆盖时可省略。ECS 继承规则与普通上游相同。"
     },
     "upstreams": {
       "type": "array",
@@ -124,7 +124,7 @@
     "custom_records": {
       "type": "array",
       "default": [],
-      "description": "精确域名本地覆盖；优先于过滤、缓存和上游。缺失查询类型返回 NOERROR 空答案。仅用于 IN 查询。",
+      "description": "精确域名本地覆盖；同时用于普通查询和 bootstrap 主机名解析，优先于过滤、缓存和上游。缺失查询类型返回 NOERROR 空答案。仅用于 IN 查询。",
       "items": {
         "type": "object",
         "additionalProperties": false,
