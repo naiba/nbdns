@@ -1,4 +1,4 @@
-# v2.0.4 — Shared bootstrap caching and DNS overrides
+# v2.0.5 — Shared bootstrap caching and DNS overrides
 
 Bootstrap hostname lookups now use the same cache and local overrides as ordinary DNS queries, reducing repeated resolution when upstream connections are recreated. No configuration migration is required from v2.0.x. Existing installations with automatic updates may install this release and restart.
 
@@ -9,10 +9,12 @@ Bootstrap hostname lookups now use the same cache and local overrides as ordinar
 - Apply `custom_records` before bootstrap cache lookups or network requests. Use A records to preconfigure upstream hostnames while keeping their original DoT/DoH names for certificate verification. No additional configuration field is required.
 - Preserve TTL expiry, negative caching, concurrent query coalescing, and per-bootstrap SOCKS settings. Zero-TTL answers and failures are not written to cache.
 - Return bootstrap lookup errors directly instead of attempting a connection to `0.0.0.0`.
-- Include the dependency updates to `github.com/ulikunitz/xz` 0.5.14 and `gopkg.in/yaml.v2` 2.2.8 already merged into main.
+- Include the dependency updates to `github.com/ulikunitz/xz` 0.5.17 and `gopkg.in/yaml.v2` 2.2.8 from main and restore 32-bit builds with the xz update.
+
+The v2.0.4 tag did not produce a release because xz 0.5.14 failed to compile on 32-bit targets. v2.0.5 includes the upstream correction and adds 32-bit cross-build checks to CI.
 
 ## Limits and validation
 
 Bootstrap still queries A records and selects the last A address returned. Multiple configured addresses do not add automatic address rotation or failover; ordinary DNS queries return all matching records. An owner configured only with AAAA or CNAME does not fall back to bootstrap DNS.
 
-Regression tests cover shared cache identity and lifetime, reuse in both directions, reopening persisted entries, ECS isolation, TTL expiry, disabled caching, negative answers, local overrides, and failed bootstrap dialing. Local release checks run `go test -race ./...`, `go vet ./...`, and `go build ./...` before pushing.
+Regression tests cover shared cache identity and lifetime, reuse in both directions, reopening persisted entries, ECS isolation, TTL expiry, disabled caching, negative answers, local overrides, and failed bootstrap dialing. Local release checks run `go test -race ./...`, `go vet ./...`, and `go build ./...` before pushing, plus cross-compilation of all 12 release OS/architecture targets.

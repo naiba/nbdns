@@ -22,3 +22,14 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
+      - name: Build 32-bit release targets
+        # Native 64-bit checks miss dependency constants that overflow int on routers.
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARM: '6'
+          GOMIPS: softfloat
+        run: |
+          for arch in 386 arm mips mipsle; do
+            GOARCH="$arch" go build ./...
+          done

@@ -48,7 +48,7 @@ archives:
       - doc/release-v2.0.1.md
       - doc/release-v2.0.2.md
       - doc/release-v2.0.3.md
-      - doc/release-v2.0.4.md
+      - doc/release-v2.0.5.md
       - doc/performance-local.md
       - doc/upstream-concurrency-performance.md
       - data
@@ -85,4 +85,4 @@ release:
 
     Bootstrap and ordinary DNS queries now share one memory/Badger cache and the existing custom_records overrides. Cache entries follow DNS TTLs and remain separated by upstream/ECS policy. Both paths use built_in_cache; no additional configuration field is required. Failed bootstrap lookups no longer attempt connections to 0.0.0.0. Multiple A records are supported, but bootstrap still selects the last address rather than rotating or failing over. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.4.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.5.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
