@@ -12,7 +12,7 @@
 
 1. 从 [releases](https://github.com/naiba/nbdns/releases) 下载最新版本
 2. 创建配置文件 `data/config.json`（参考下方配置示例）
-3. 启动 `./nbdns`
+3. 启动 `./nbdns`（`./nbdns -version` 只打印版本；DNS 端口已被占用时第二个实例在读写 `data/` 前以退出码 1 退出）
 4. 访问 `http://localhost:8854` 查看监控面板
 5. DNS TCP/UDP `127.0.0.1:8853`, DoH `http://localhost:8854/dns-query`
 

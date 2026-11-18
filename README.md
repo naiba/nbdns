@@ -12,7 +12,7 @@
 
 1. Download the latest release from [releases](https://github.com/naiba/nbdns/releases)
 2. Create config file `data/config.json` (see example below)
-3. Run `./nbdns`
+3. Run `./nbdns` (`./nbdns -version` only prints the version; a second instance exits with code 1 if the DNS port is taken, before touching `data/`)
 4. Visit `http://localhost:8854` for the monitoring dashboard
 5. DNS TCP/UDP `127.0.0.1:8853`, DoH `http://localhost:8854/dns-query`
 

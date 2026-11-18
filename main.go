@@ -34,6 +34,9 @@ var (
 )
 
 func main() {
+	if run, exitCode := parseCommandLine(os.Args[1:], version, os.Stdout); !run {
+		os.Exit(exitCode)
+	}
 	dataPath = detectDataPath()
 
 	// 先创建一个临时 logger 用于读取配置
@@ -42,6 +45,12 @@ func main() {
 	config = &model.Config{}
 	if err := config.ReadInConfig(dataPath+"/config.json", tempLogger); err != nil {
 		panic(err)
+	}
+
+	// 先占用 DNS 端口：误启动的第二个实例在读写数据目录、打开缓存和自更新之前就失败退出。
+	packetConn, streamListener, err := listenDNS(config.ServeAddr)
+	if err != nil {
+		log.Fatalf("DNS 端口监听失败（是否已有实例在运行？）: %v", err)
 	}
 
 	// 设置默认 Web 监听地址
@@ -81,8 +90,8 @@ func main() {
 		config.Upstreams[i].InitConnectionPool(bootstrapHandler.LookupIP)
 	}
 
-	server := &dns.Server{Addr: config.ServeAddr, Net: "udp"}
-	serverTCP := &dns.Server{Addr: config.ServeAddr, Net: "tcp"}
+	server := &dns.Server{PacketConn: packetConn}
+	serverTCP := &dns.Server{Listener: streamListener}
 
 	var filterManager *filter.Manager
 	if len(config.FilterLists) > 0 {
@@ -168,7 +177,12 @@ func main() {
 		log.Printf("性能分析: http://%s/debug/pprof/", config.WebAddr)
 	}
 
-	go http.ListenAndServe(config.WebAddr, webServerHandler)
+	go func() {
+		// 面板端口冲突不影响 DNS 服务，但不能静默失败。
+		if err := http.ListenAndServe(config.WebAddr, webServerHandler); err != nil {
+			log.Printf("监控面板监听失败: %v", err)
+		}
+	}()
 	log.Printf("监控面板: http://%s/", config.WebAddr)
 
 	// 定时保存统计数据（使用配置的间隔）
@@ -213,10 +227,10 @@ func main() {
 	}
 
 	go func() {
-		stopCh <- server.ListenAndServe()
+		stopCh <- server.ActivateAndServe()
 	}()
 	go func() {
-		stopCh <- serverTCP.ListenAndServe()
+		stopCh <- serverTCP.ActivateAndServe()
 	}()
 
 	sigCh := make(chan os.Signal, 1)
