@@ -21,10 +21,16 @@ type Handler struct {
 	checkUpdateCh chan<- struct{}
 	logger        logger.Logger
 	filterStatus  func() filter.Snapshot
+	ecsStatus     func() string
 }
 
 func (h *Handler) SetFilterStatus(snapshot func() filter.Snapshot) {
 	h.filterStatus = snapshot
+}
+
+// SetECSBlackholeStatus reports whether ECS blackhole fallback is active.
+func (h *Handler) SetECSBlackholeStatus(status func() string) {
+	h.ecsStatus = status
 }
 
 // NewHandler 创建Web处理器
@@ -79,6 +85,9 @@ func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	// 获取统计快照
 	snapshot := h.stats.GetSnapshot()
+	if h.ecsStatus != nil {
+		snapshot.ECSBlackhole.Status = h.ecsStatus()
+	}
 
 	// 设置响应头
 	w.Header().Set("Content-Type", "application/json")

@@ -139,6 +139,7 @@ func main() {
 	if filterManager != nil {
 		webHandler.SetFilterStatus(filterManager.Snapshot)
 	}
+	webHandler.SetECSBlackholeStatus(config.ECSBlackholeFallbackStatus)
 	webHandler.RegisterRoutes(webServerHandler)
 	updateContext, cancelFilterUpdates := context.WithCancel(context.Background())
 	defer cancelFilterUpdates()

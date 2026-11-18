@@ -46,7 +46,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
     {"address": "tcp-tls://8.8.8.8:853", "proxy_enabled": true, "ecs": ""}
   ],
   "upstreams": [
-    {"address": "tcp-tls://dns.google:853", "proxy_enabled": true},
+    {"address": "tcp-tls://dns.example:853", "proxy_enabled": true},
     {"address": "https://user:pass@doh.example.com/dns-query", "match": ["internal.example", ".internal.example"], "ecs": ""}
   ],
   "doh_server": {
@@ -65,6 +65,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 | `serve_addr`     | DNS 服务监听地址                                     | 必填           |
 | `web_addr`       | Web 面板和 DoH 服务端口                              | `0.0.0.0:8854` |
 | `ecs` | 全局 ECS CIDR，上游未配置时继承 | 空（不发送） |
+| `ecs_blackhole_fallback` | ECS 应答含特殊用途地址（如 `169.254.0.2`）时去掉 ECS 重查 | `true` |
 | `timeout`        | 上游超时时间（秒）                                   | `4`            |
 | `max_concurrent_queries` | 等待回源的最大并发数，含合并请求的等待者；超限返回 SERVFAIL 或可用旧缓存 | `64` |
 | `max_active_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大连接数 | `50` |
@@ -100,13 +101,15 @@ Bootstrap 和普通 DNS 查询共用 `custom_records`，覆盖优先于缓存和
 }
 ```
 
-上游仍使用 `tcp-tls://dns.google:853` 或 `https://dns.google/dns-query`，保留域名证书校验和 HTTP Host。Bootstrap 当前查询 A 记录，因此固定上游地址需要 A 覆盖；仅配置 AAAA 或 CNAME 不会自动递归或回退到引导 DNS。没有覆盖的域名继续查询引导 DNS 并按 TTL 缓存。服务商地址可能变化时，应保留动态解析。
+上游仍使用 `tcp-tls://dns.example:853` 或 `https://dns.google/dns-query`，保留域名证书校验和 HTTP Host。Bootstrap 当前查询 A 记录，因此固定上游地址需要 A 覆盖；仅配置 AAAA 或 CNAME 不会自动递归或回退到引导 DNS。没有覆盖的域名继续查询引导 DNS 并按 TTL 缓存。服务商地址可能变化时，应保留动态解析。
 
 ### 查询与 ECS
 
 所有匹配上游并发查询，采用第一个完整、请求匹配的 NOERROR 或 NXDOMAIN 应答；网络错误、截断响应、SERVFAIL 和 REFUSED 不会抢先胜出，全部失败时返回 SERVFAIL。不合并不同上游的答案，不进行 IP 国家判断，不需要 IP 网段文件，也没有查询模式。
 
 全局 `ecs` 为 IPv4/IPv6 CIDR，省略或空字符串表示不发送 ECS。上游 `ecs` 可以继承、覆盖或显式禁用；bootstrap 使用相同继承规则，示例显式禁用以避免不必要的位置提示。主机位会归零，例如 `180.152.0.123/24` 实际发送 `180.152.0.0/24`。客户端自行携带的 ECS 总会删除，只发送管理员配置的值；其他 EDNS 选项与 DO 标记保留。解析策略改变后使用独立的缓存命名空间。
+
+部分服务按 ECS 屏蔽地区：对被屏蔽地区的 ECS 返回 `169.254.0.2` 等不可用地址，被 dnsmasq 防重绑定丢弃后客户端得到空应答。ECS 应答中的 A/AAAA 含特殊用途地址（0/8、10/8、100.64/10、127/8、169.254/16、172.16/12、192.168/16、198.18/15、组播/保留段、`::`、`::1`、`fe80::/10`、`fc00::/7`）时，向同一上游去掉 ECS 再查一次；仅当重查结果全部为公网地址才采用，并在 24 小时内对该域名直接不带 ECS 查询。真实解析到内网地址的域名不带 ECS 也是内网地址，保持原样。监控面板的“ECS 黑洞自动修复”卡片展示开关状态、修复次数（缓存命中不重复计数）及各域名的黑洞地址与修复后地址。设为 `false` 可关闭。
 
 `180.152.0.0/24` 是上海电信代表网段示例，并非自动检测的用户位置。ECS 向解析器及支持它的权威服务披露网段提示，不保证最近 CDN；配置上游必须支持 ECS，否则竞速胜出的答案可能未按指定位置调度。优先使用可信 DoH/DoT，必要时启用 SOCKS；加密不等于解析器内容可信。仅添加可信上游，因为最快的 NXDOMAIN 也会被采用。
 

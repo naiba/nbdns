@@ -81,8 +81,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — Shared bootstrap caching and DNS overrides
+    ## {{ .Tag }} — ECS blackhole repair and compressed replies
 
-    Bootstrap and ordinary DNS queries now share one memory/Badger cache and the existing custom_records overrides. Cache entries follow DNS TTLs and remain separated by upstream/ECS policy. Both paths use built_in_cache; no additional configuration field is required. Failed bootstrap lookups no longer attempt connections to 0.0.0.0. Multiple A records are supported, but bootstrap still selects the last address rather than rotating or failing over. Existing installations may automatically install this release and restart.
+    Services that geo-block by ECS answer some regions with unusable addresses such as 169.254.0.2, which dnsmasq rebind protection turns into empty answers. Such ECS answers are now retried once without ECS and used only if all addresses are public; names that really resolve to LAN addresses are unaffected. Repaired names skip ECS for 24 hours, the repairing policy starts with a fresh cache, and a new dashboard panel lists every repaired domain. The behaviour is on by default and can be disabled with ecs_blackhole_fallback: false. DNS replies are now always name-compressed, avoiding empty truncated replies behind dnsmasq. v2.1.0 was withdrawn. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.0.5.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.1.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

@@ -101,6 +101,7 @@ func (s *DoHServer) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp.Compress = true // Name compression keeps DoH bodies small, as for UDP/TCP.
 	data, err = resp.Pack()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)

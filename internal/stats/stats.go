@@ -30,6 +30,7 @@ type StatsRecorder interface {
 	RecordUpstreamQuery(address string, isError bool)
 	RecordClientQuery(clientIP, domain string)
 	RecordBlockedQuery(clientIP, domain string)
+	RecordECSBlackholeFallback(event ECSBlackholeEvent)
 	GetSnapshot() StatsSnapshot
 	Reset()
 	Save(dataPath string) error
@@ -56,6 +57,11 @@ type Stats struct {
 	topClients        *TopNTracker // 客户端 IP Top N
 	topDomains        *TopNTracker // 已解析域名 Top N
 	topBlockedDomains *TopNTracker // 被拦截域名 Top N
+
+	// ECS 黑洞自动修复统计（由 mu 保护）
+	ecsBlackholeFixed    uint64
+	ecsBlackholeSequence uint64
+	ecsBlackholeDomains  map[string]*ecsBlackholeDomain
 }
 
 // UpstreamStats 上游服务器统计
@@ -71,12 +77,13 @@ type UpstreamStats struct {
 func NewStats() *Stats {
 	now := time.Now()
 	return &Stats{
-		StartTime:         now,
-		StatsStartTime:    now,
-		upstreamStats:     make(map[string]*UpstreamStats),
-		topClients:        NewTopNTracker(100), // 最多保留 100 个客户端 IP
-		topDomains:        NewTopNTracker(200), // 最多保留 200 个域名
-		topBlockedDomains: NewTopNTracker(200), // 最多保留 200 个被拦截域名
+		StartTime:           now,
+		StatsStartTime:      now,
+		upstreamStats:       make(map[string]*UpstreamStats),
+		ecsBlackholeDomains: make(map[string]*ecsBlackholeDomain),
+		topClients:          NewTopNTracker(100), // 最多保留 100 个客户端 IP
+		topDomains:          NewTopNTracker(200), // 最多保留 200 个域名
+		topBlockedDomains:   NewTopNTracker(200), // 最多保留 200 个被拦截域名
 	}
 }
 
@@ -173,6 +180,9 @@ func (s *Stats) Reset() {
 	// 重置上游服务器统计
 	s.upstreamStats = make(map[string]*UpstreamStats)
 
+	s.ecsBlackholeFixed = 0
+	s.ecsBlackholeDomains = make(map[string]*ecsBlackholeDomain)
+
 	// 重置 Top N 统计
 	s.topClients.Reset()
 	s.topDomains.Reset()
@@ -234,6 +244,7 @@ type StatsSnapshot struct {
 	TopClients        []TopNItemJSON      `json:"top_clients"`         // Top 客户端 IP
 	TopDomains        []TopNItemJSON      `json:"top_domains"`         // Top 已解析域名
 	TopBlockedDomains []TopNItemJSON      `json:"top_blocked_domains"` // Top 被拦截域名
+	ECSBlackhole      ECSBlackholeStats   `json:"ecs_blackhole"`       // ECS 黑洞自动修复
 }
 
 // GetSnapshot 获取统计快照
@@ -336,6 +347,7 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 		TopClients:        topClients,
 		TopDomains:        topDomains,
 		TopBlockedDomains: topBlockedDomains,
+		ECSBlackhole:      s.ecsBlackholeSnapshot(),
 	}
 }
 
@@ -473,6 +485,7 @@ type PersistentStats struct {
 	TopClients        []PersistentTopNItem           `json:"top_clients"`
 	TopDomains        []PersistentTopNItem           `json:"top_domains"`
 	TopBlockedDomains []PersistentTopNItem           `json:"top_blocked_domains,omitempty"`
+	ECSBlackhole      *PersistentECSBlackhole        `json:"ecs_blackhole,omitempty"`
 }
 
 // PersistentUpstream 持久化上游服务器统计
@@ -645,6 +658,7 @@ func (s *Stats) Save(dataPath string) error {
 		TopClients:        make([]PersistentTopNItem, 0),
 		TopDomains:        make([]PersistentTopNItem, 0),
 		TopBlockedDomains: make([]PersistentTopNItem, 0),
+		ECSBlackhole:      s.persistentECSBlackholeLocked(),
 	}
 
 	// 保存上游服务器统计
@@ -733,6 +747,7 @@ func (s *Stats) Load(dataPath string) error {
 	s.CacheHits.Store(persistent.CacheHits)
 	s.CacheMisses.Store(persistent.CacheMisses)
 	s.FailedQueries.Store(persistent.FailedQueries)
+	s.restoreECSBlackholeLocked(persistent.ECSBlackhole)
 
 	// 恢复上游服务器统计
 	for addr, pus := range persistent.Upstreams {

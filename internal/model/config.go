@@ -23,6 +23,7 @@ type Config struct {
 	WebAddr                   string           `json:"web_addr,omitempty"`
 	DohServer                 *DohServerConfig `json:"doh_server,omitempty"`
 	ECS                       string           `json:"ecs,omitempty"`
+	ECSBlackholeFallback      *bool            `json:"ecs_blackhole_fallback,omitempty"` // Default true: retry ECS blackhole answers without ECS
 	Timeout                   int              `json:"timeout,omitempty"`
 	SocksProxy                string           `json:"socks_proxy,omitempty"`
 	BuiltInCache              bool             `json:"built_in_cache,omitempty"`
@@ -41,6 +42,26 @@ type Config struct {
 	// Stats persistence interval in minutes
 	StatsSaveInterval int `json:"stats_save_interval,omitempty"` // Default: 5 minutes
 
+	ecsBlackholes ecsBlackholeMemory // Shared by all upstreams of this configuration
+}
+
+// ECSBlackholeFallbackEnabled defaults to true so geo-blocked ECS answers work without configuration.
+func (c *Config) ECSBlackholeFallbackEnabled() bool {
+	return c.ECSBlackholeFallback == nil || *c.ECSBlackholeFallback
+}
+
+// ECSBlackholeFallbackStatus is shown on the dashboard: "no_ecs" when no
+// upstream sends ECS (nothing to repair), otherwise "enabled" or "disabled".
+func (c *Config) ECSBlackholeFallbackStatus() string {
+	for _, up := range c.Upstreams {
+		if up != nil && up.EffectiveECS() != "" {
+			if c.ECSBlackholeFallbackEnabled() {
+				return "enabled"
+			}
+			return "disabled"
+		}
+	}
+	return "no_ecs"
 }
 
 func (c *Config) ReadInConfig(path string, log logger.Logger) error {

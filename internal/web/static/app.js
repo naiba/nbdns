@@ -94,6 +94,82 @@ function updateFilters(data) {
     });
 }
 
+var ECS_FIX_STATUS = {
+    enabled: { label: '已开启', empty: '暂未发现被 ECS 屏蔽的域名，一切正常', emptyClass: 'empty ok' },
+    disabled: { label: '已关闭', empty: '自动修复已关闭；删除配置中的 "ecs_blackhole_fallback": false 即可开启', emptyClass: 'empty' },
+    no_ecs: { label: '未配置 ECS', empty: '未向上游发送 ECS，不会出现 ECS 黑洞，无需修复', emptyClass: 'empty' }
+};
+
+function relativeTime(iso) {
+    var t = Date.parse(iso);
+    if (!iso || isNaN(t) || t <= 0) return '-';
+    var sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (sec < 60) return '刚刚';
+    if (sec < 3600) return Math.floor(sec / 60) + ' 分钟前';
+    if (sec < 86400) return Math.floor(sec / 3600) + ' 小时前';
+    return Math.floor(sec / 86400) + ' 天前';
+}
+
+function makeAddressList(addresses, kind) {
+    var wrap = document.createElement('div'); wrap.className = 'addr-list';
+    var list = addresses || [];
+    if (!list.length) {
+        var none = document.createElement('span'); none.className = 'dim'; none.textContent = '-';
+        wrap.appendChild(none); return wrap;
+    }
+    list.slice(0, 3).forEach(function(address) {
+        var chip = document.createElement('span'); chip.className = 'addr ' + kind; chip.textContent = address;
+        wrap.appendChild(chip);
+    });
+    if (list.length > 3) {
+        var more = document.createElement('span'); more.className = 'addr more';
+        more.textContent = '+' + (list.length - 3); more.title = list.slice(3).join('\n');
+        wrap.appendChild(more);
+    }
+    return wrap;
+}
+
+function updateECSFixes(e) {
+    e = e || {};
+    var info = ECS_FIX_STATUS[e.status] || { label: '未知', empty: '暂无修复记录', emptyClass: 'empty' };
+    var pill = document.getElementById('ecs-fix-status');
+    pill.textContent = info.label; pill.setAttribute('data-status', e.status || '');
+    var domains = e.domains || [];
+    document.getElementById('ecs-fix-count').textContent = fmt(e.fixed || 0);
+    document.getElementById('ecs-fix-domains').textContent = fmt(domains.length);
+    var last = document.getElementById('ecs-fix-last');
+    last.textContent = domains.length ? relativeTime(domains[0].last_seen) : '-';
+    last.title = domains.length ? new Date(domains[0].last_seen).toLocaleString() : '';
+
+    var tb = document.getElementById('ecs-fix-tbody');
+    tb.replaceChildren();
+    if (!domains.length) {
+        var emptyRow = document.createElement('tr'); var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 5; emptyCell.className = info.emptyClass; emptyCell.textContent = info.empty;
+        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow); return;
+    }
+    domains.forEach(function(d) {
+        var row = document.createElement('tr');
+        var name = document.createElement('td'); name.className = 'domain-cell';
+        var shown = (d.domain || '-').replace(/\.$/, '');
+        name.textContent = shown;
+        // Small screens hide the blackhole column; show it under the domain instead.
+        var inline = document.createElement('div'); inline.className = 'addr-inline-sm';
+        var inlineLabel = document.createElement('span'); inlineLabel.textContent = 'ECS 返回 ';
+        var inlineAddr = document.createElement('s'); inlineAddr.textContent = (d.blackhole_addresses || []).join(', ') || '-';
+        inline.append(inlineLabel, inlineAddr);
+        name.appendChild(inline);
+        name.title = shown + (d.upstream ? '\n上游: ' + d.upstream : '') +
+            (d.first_seen ? '\n首次发现: ' + new Date(d.first_seen).toLocaleString() : '');
+        var blackhole = document.createElement('td'); blackhole.className = 'hide-sm'; blackhole.appendChild(makeAddressList(d.blackhole_addresses, 'blackhole'));
+        var fixed = document.createElement('td'); fixed.appendChild(makeAddressList(d.public_addresses, 'public'));
+        var count = document.createElement('td'); count.className = 'number-cell'; count.textContent = fmt(d.count || 0);
+        var seen = document.createElement('td'); seen.className = 'hide-sm dim';
+        seen.textContent = relativeTime(d.last_seen); seen.title = d.last_seen ? new Date(d.last_seen).toLocaleString() : '';
+        row.append(name, blackhole, fixed, count, seen); tb.appendChild(row);
+    });
+}
+
 function updateTopClients(list) {
     var leaderboard = document.getElementById('top-clients-list');
     leaderboard.replaceChildren();
@@ -241,6 +317,7 @@ async function load() {
         updateRuntime(d.runtime);
         updateQueries(d.queries);
         updateUpstream(d.upstreams);
+        updateECSFixes(d.ecs_blackhole);
         updateTopClients(d.top_clients);
         updateDomainRanking(d.top_domains, 'top-domains-tbody', '暂无解析记录');
         updateDomainRanking(d.top_blocked_domains, 'top-blocked-domains-tbody', '暂无拦截记录');

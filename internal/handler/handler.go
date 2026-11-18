@@ -160,23 +160,38 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	if len(upstreams) == 0 {
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
-	exchange := func(ctx context.Context, up *model.Upstream, query *dns.Msg) *dns.Msg {
-		msg, _, err := up.ExchangeContext(ctx, query)
+	type upstreamReply struct {
+		msg      *dns.Msg
+		fallback *model.ECSBlackholeFallback
+	}
+	exchange := func(ctx context.Context, up *model.Upstream, query *dns.Msg) upstreamReply {
+		// Per-upstream report: racing losers may also repair their answers.
+		report := &model.ECSBlackholeReport{}
+		msg, _, err := up.ExchangeContext(model.WithECSBlackholeReport(ctx, report), query)
 		valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
 			(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
 		if h.stats != nil {
 			h.stats.RecordUpstreamQuery(up.Address, !valid && !errors.Is(err, context.Canceled))
 		}
 		if !valid {
-			return nil
+			return upstreamReply{}
 		}
-		return msg
+		return upstreamReply{msg, report.Fallback}
+	}
+	// Only the answer actually served counts as an ECS blackhole fix.
+	served := func(reply upstreamReply) *dns.Msg {
+		if reply.fallback != nil && h.stats != nil {
+			f := reply.fallback
+			h.stats.RecordECSBlackholeFallback(stats.ECSBlackholeEvent{Domain: f.Domain, Upstream: f.Upstream,
+				BlackholeAddresses: f.BlackholeAddresses, PublicAddresses: f.PublicAddresses, Remembered: f.Remembered})
+		}
+		return reply.msg
 	}
 	// A single upstream cannot race: avoid a channel, worker and redundant copy.
 	// Upstream.Exchange owns its ECS-controlled copy and never mutates req.
 	if len(upstreams) == 1 {
-		if msg := exchange(context.Background(), upstreams[0], req); msg != nil {
-			return msg
+		if reply := exchange(context.Background(), upstreams[0], req); reply.msg != nil {
+			return served(reply)
 		}
 		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
 	}
@@ -186,14 +201,14 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	// subsequent cache misses even after their clients have received an answer.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	replies := make(chan *dns.Msg, len(upstreams))
+	replies := make(chan upstreamReply, len(upstreams))
 	for _, upstream := range upstreams {
 		query := req.Copy()
 		go func(up *model.Upstream) { replies <- exchange(ctx, up, query) }(upstream)
 	}
 	for range upstreams {
-		if msg := <-replies; msg != nil {
-			return msg
+		if reply := <-replies; reply.msg != nil {
+			return served(reply)
 		}
 	}
 	return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
@@ -205,10 +220,14 @@ func upstreamCacheNamespace(upstreams []*model.Upstream) string {
 		Socks   bool
 		Match   []string
 		ECS     string
+		// Pre-repair caches may hold ECS blackholes (e.g. 169.254.0.2),
+		// so the repairing policy gets a fresh namespace. omitempty keeps the old
+		// namespace for policies that cannot repair: no ECS, or repair disabled.
+		ECSBlackholeRepair bool `json:",omitempty"`
 	}
 	policies := make([]policy, 0, len(upstreams))
 	for _, up := range upstreams {
-		policies = append(policies, policy{up.Address, up.ProxyEnabled, up.Match, up.EffectiveECS()})
+		policies = append(policies, policy{up.Address, up.ProxyEnabled, up.Match, up.EffectiveECS(), up.EffectiveECS() != "" && up.ECSBlackholeFallbackEnabled()})
 	}
 	encoded, _ := json.Marshal(policies)
 	// Cache namespaces isolate answers produced by different ECS and upstream policies.
@@ -546,6 +565,7 @@ func (h *Handler) HandleRequest(w dns.ResponseWriter, req *dns.Msg) {
 
 	// 调用核心处理逻辑
 	resp := h.HandleDnsMsg(req, clientIP, domain)
+	resp.Compress = true // Smaller replies for every transport; see truncateUDP.
 	if _, ok := w.RemoteAddr().(*net.UDPAddr); ok {
 		truncateUDP(req, resp)
 	}
@@ -562,6 +582,11 @@ func truncateUDP(req, resp *dns.Msg) {
 		size = min(int(opt.UDPSize()), 1232)
 	}
 	resp.Truncate(size)
+	// Truncate disables compression when the reply fits. dnsmasq queries with
+	// EDNS 1232 but relays to non-EDNS clients: a large uncompressed CDN answer
+	// (2 CNAMEs + 8 A, more than twice its compressed size) then becomes an
+	// empty TC reply. Always compress.
+	resp.Compress = true
 }
 
 // uniqueAnswer 去除重复的 DNS 资源记录

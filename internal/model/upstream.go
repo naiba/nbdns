@@ -214,16 +214,51 @@ func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
+	up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
+	defer up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
+
+	name := GetDomainNameFromDnsMsg(req)
+	fallback := up.ecsPrefix.IsValid() && up.ECSBlackholeFallbackEnabled() && name != ""
+	if fallback {
+		if blackholes, known := up.config.ecsBlackholes.lookup(name); known {
+			// Known geo-blocked name: skip the ECS probe that would return a blackhole.
+			resp, duration, err := up.exchangeTransport(ctx, up.controlledECSRequest(req, false))
+			if err == nil && isPublicAddressAnswer(resp) {
+				reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address,
+					BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(resp, false), Remembered: true})
+			}
+			return resp, duration, err
+		}
+	}
+	// Never forward caller-supplied ECS or mutate shared requests during racing.
+	resp, duration, err := up.exchangeTransport(ctx, up.controlledECSRequest(req, true))
+	if !fallback || err != nil || !hasECSBlackhole(resp) {
+		return resp, duration, err
+	}
+	// See ecsBlackholePrefixes: retry without ECS, accept only a fully public answer.
+	plain, plainRTT, plainErr := up.exchangeTransport(ctx, up.controlledECSRequest(req, false))
+	duration += plainRTT
+	if plainErr == nil && isPublicAddressAnswer(plain) {
+		blackholes := answerAddressStrings(resp, true)
+		up.config.ecsBlackholes.remember(name, blackholes)
+		up.logger.Printf("ECS blackhole %v for %s via %s; using answer without ECS", blackholes, name, up.Address)
+		reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address,
+			BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(plain, false)})
+		return plain, duration, nil
+	}
+	if ctx.Err() != nil {
+		return nil, duration, ctx.Err()
+	}
+	return resp, duration, nil
+}
+
+// exchangeTransport performs one exchange of an already ECS-controlled request.
+func (up *Upstream) exchangeTransport(ctx context.Context, req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	if up.config.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(up.config.Timeout)*time.Second)
 		defer cancel()
 	}
-	up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Inc(), up.poolLen(), runtime.NumGoroutine(), "enter")
-	defer up.logger.Printf("tracing exchange %s worker_count: %d pool_count: %d go_routine: %d --> %s", up.Address, up.count.Dec(), up.poolLen(), runtime.NumGoroutine(), "exit")
-
-	// Never forward caller-supplied ECS or mutate shared requests during racing.
-	req = up.controlledECSRequest(req)
 	var resp *dns.Msg
 	var duration time.Duration
 	var err error
@@ -332,6 +367,11 @@ func (up *Upstream) EffectiveECS() string {
 	return ""
 }
 
+// ECSBlackholeFallbackEnabled reports the configuration switch; unset means enabled.
+func (up *Upstream) ECSBlackholeFallbackEnabled() bool {
+	return up.config == nil || up.config.ECSBlackholeFallbackEnabled()
+}
+
 func parseECS(value string) (netip.Prefix, error) {
 	if value == "" {
 		return netip.Prefix{}, nil
@@ -343,7 +383,7 @@ func parseECS(value string) (netip.Prefix, error) {
 	return prefix.Masked(), nil
 }
 
-func (up *Upstream) controlledECSRequest(request *dns.Msg) *dns.Msg {
+func (up *Upstream) controlledECSRequest(request *dns.Msg, sendECS bool) *dns.Msg {
 	req := request.Copy()
 	opt := req.IsEdns0()
 	if opt != nil {
@@ -355,7 +395,7 @@ func (up *Upstream) controlledECSRequest(request *dns.Msg) *dns.Msg {
 		}
 		opt.Option = options
 	}
-	if !up.ecsPrefix.IsValid() {
+	if !sendECS || !up.ecsPrefix.IsValid() {
 		return req
 	}
 	if opt == nil {

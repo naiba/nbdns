@@ -505,6 +505,53 @@ tbody tr:last-child td { border-bottom: none; }
 .error-high { color: var(--bad); font-weight: 600; }
 .empty { text-align: center; color: var(--fg3); padding: 24px 12px; }
 
+.ecs-fix-panel { border-top: 3px solid var(--em); }
+.ecs-fix-panel .panel-subtitle { max-width: 760px; }
+
+.status-pill {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--fg3);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.status-pill::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    vertical-align: 1px;
+}
+.status-pill[data-status="enabled"] { color: var(--good); border-color: var(--good); }
+.status-pill[data-status="disabled"] { color: var(--bad); border-color: var(--bad); }
+
+.kv dd.ecs-fix-last { font-size: 14px; line-height: 1.5; }
+
+.ecs-fix-table .num-head { text-align: right; width: 64px; }
+.ecs-fix-table .domain-cell { max-width: 260px; }
+.addr-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.addr {
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--bg);
+    font: 12px/1.5 "SF Mono", Menlo, Consolas, monospace;
+    white-space: nowrap;
+}
+.addr.blackhole { color: var(--bad); text-decoration: line-through; text-decoration-thickness: 1px; }
+.addr.public { color: var(--good); }
+.addr.more { color: var(--fg3); }
+.addr-inline-sm { display: none; }
+.empty.ok { color: var(--good); }
+.panel-footnote { margin-top: 12px; color: var(--fg3); font-size: 12px; line-height: 1.5; }
+.panel-footnote code { font: 11px "SF Mono", Menlo, Consolas, monospace; color: var(--fg2); }
+
 .sr-only {
     position: absolute;
     width: 1px;
@@ -537,6 +584,12 @@ footer {
     .kv dd { font-size: 15px; }
     .nav-inner { padding: 0 16px; }
     .hide-sm { display: none; }
+    .ecs-fix-panel .ranking-head { flex-wrap: wrap; }
+    .ecs-fix-table .domain-cell { width: 40%; max-width: none; white-space: normal; overflow-wrap: anywhere; }
+    .ecs-fix-table td, .ecs-fix-table th { padding-left: 6px; padding-right: 6px; }
+    .ecs-fix-table .addr { font-size: 11px; padding: 1px 4px; white-space: normal; overflow-wrap: anywhere; }
+    .addr-inline-sm { display: block; margin-top: 2px; color: var(--bad); font: 11px/1.4 "SF Mono", Menlo, Consolas, monospace; }
+    .addr-inline-sm span { color: var(--fg3); }
     .domain-ranking-panel .ranking-head { flex-wrap: wrap; }
     .domain-ranking-panel .ranking-head-actions { width: 100%; justify-content: space-between; }
     .client-leaderboard {

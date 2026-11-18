@@ -46,7 +46,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
     {"address": "tcp-tls://8.8.8.8:853", "proxy_enabled": true, "ecs": ""}
   ],
   "upstreams": [
-    {"address": "tcp-tls://dns.google:853", "proxy_enabled": true},
+    {"address": "tcp-tls://dns.example:853", "proxy_enabled": true},
     {"address": "https://user:pass@doh.example.com/dns-query", "match": ["internal.example", ".internal.example"], "ecs": ""}
   ],
   "doh_server": {
@@ -65,6 +65,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 | `serve_addr`     | DNS service listen address                                          | Required       |
 | `web_addr`       | Web dashboard and DoH service port                                  | `0.0.0.0:8854` |
 | `ecs` | Global ECS CIDR inherited by upstreams | Empty (no ECS) |
+| `ecs_blackhole_fallback` | Retry ECS answers containing special-use addresses (e.g. `169.254.0.2`) without ECS | `true` |
 | `timeout`        | Upstream timeout in seconds                                         | `4`            |
 | `max_concurrent_queries` | Maximum pending cache misses, including coalesced waiters; overload returns SERVFAIL or eligible stale cache | `64` |
 | `max_active_connections` | Maximum active connections per TCP/DoT pool or DoH upstream | `50` |
@@ -100,13 +101,15 @@ Bootstrap and ordinary DNS queries share `custom_records`, checked before caches
 }
 ```
 
-Keep `tcp-tls://dns.google:853` or `https://dns.google/dns-query` as the upstream address to preserve TLS hostname verification and HTTP Host. Bootstrap currently queries A records, so pinned upstream hosts require A overrides; an AAAA-only or CNAME override neither recurses nor falls back to bootstrap servers. Names without overrides use bootstrap DNS with TTL caching. Keep dynamic resolution for providers whose addresses may change.
+Keep `tcp-tls://dns.example:853` or `https://dns.google/dns-query` as the upstream address to preserve TLS hostname verification and HTTP Host. Bootstrap currently queries A records, so pinned upstream hosts require A overrides; an AAAA-only or CNAME override neither recurses nor falls back to bootstrap servers. Names without overrides use bootstrap DNS with TTL caching. Keep dynamic resolution for providers whose addresses may change.
 
 ### Queries and ECS
 
 All matched upstreams race; the first complete, question-matching NOERROR or NXDOMAIN response wins. Network errors, truncated replies, SERVFAIL and REFUSED cannot win. If all fail, return SERVFAIL. Answers are never merged. There is no IP-country filtering, IP database requirement, or strategy setting.
 
 Global `ecs` accepts an IPv4/IPv6 CIDR; omitted or empty means no ECS. Upstream overrides also apply to bootstrap servers; the example explicitly disables bootstrap ECS. Host bits are masked (e.g. `180.152.0.123/24` becomes `180.152.0.0/24`). Client-supplied ECS is always stripped; only administrator-configured ECS is sent, preserving other EDNS options and DO. Changed resolution policies use separate cache namespaces.
+
+Some services geo-block by ECS: an ECS from a blocked region is answered with an unusable address such as `169.254.0.2`, which dnsmasq rebind protection turns into an empty answer. When an ECS answer contains special-use A/AAAA addresses (0/8, 10/8, 100.64/10, 127/8, 169.254/16, 172.16/12, 192.168/16, 198.18/15, multicast/reserved, `::`, `::1`, `fe80::/10`, `fc00::/7`), the same upstream is asked once more without ECS; the retry is used only if all its addresses are public, and the name then skips ECS for 24 hours. Names that really resolve to LAN addresses stay private either way and are unaffected. The dashboard's "ECS 黑洞自动修复" panel shows the status, repaired answers (cache hits are not recounted) and each domain's blackhole and repaired addresses. Set `ecs_blackhole_fallback` to `false` to disable.
 
 `180.152.0.0/24` is a Shanghai Telecom example, not automatic client location detection. ECS discloses a network hint to resolvers and participating authoritative services and does not guarantee the nearest CDN. All racing resolvers should support ECS; otherwise the winning answer may ignore the location hint. Prefer trusted DoH/DoT, optionally through SOCKS. Encryption does not establish resolver trust; even the fastest NXDOMAIN wins.
 
