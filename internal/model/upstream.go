@@ -220,11 +220,11 @@ func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg
 	name := GetDomainNameFromDnsMsg(req)
 	fallback := up.ecsPrefix.IsValid() && up.ECSBlackholeFallbackEnabled() && name != ""
 	if fallback {
-		if blackholes, known := up.config.ecsBlackholes.lookup(name); known {
-			// Known geo-blocked name: skip the ECS probe that would return a blackhole.
+		if reason, blackholes, known := up.config.ecsBlackholes.lookup(name); known {
+			// Known name: skip the ECS probe that would return a blackhole or REFUSED.
 			resp, duration, err := up.exchangeTransport(ctx, up.controlledECSRequest(req, false))
-			if err == nil && isPublicAddressAnswer(resp) {
-				reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address,
+			if err == nil && acceptsECSFallback(reason, resp) {
+				reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address, Reason: reason,
 					BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(resp, false), Remembered: true})
 			}
 			return resp, duration, err
@@ -232,17 +232,22 @@ func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg
 	}
 	// Never forward caller-supplied ECS or mutate shared requests during racing.
 	resp, duration, err := up.exchangeTransport(ctx, up.controlledECSRequest(req, true))
-	if !fallback || err != nil || !hasECSBlackhole(resp) {
+	reason := ""
+	if fallback && err == nil {
+		reason = ecsFallbackReason(resp)
+	}
+	if reason == "" {
 		return resp, duration, err
 	}
-	// See ecsBlackholePrefixes: retry without ECS, accept only a fully public answer.
+	// See ecsBlackholePrefixes and ECSFallbackReasonRefused: retry once without
+	// ECS and keep the original reply unless the retry actually repairs it.
 	plain, plainRTT, plainErr := up.exchangeTransport(ctx, up.controlledECSRequest(req, false))
 	duration += plainRTT
-	if plainErr == nil && isPublicAddressAnswer(plain) {
+	if plainErr == nil && acceptsECSFallback(reason, plain) {
 		blackholes := answerAddressStrings(resp, true)
-		up.config.ecsBlackholes.remember(name, blackholes)
-		up.logger.Printf("ECS blackhole %v for %s via %s; using answer without ECS", blackholes, name, up.Address)
-		reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address,
+		up.config.ecsBlackholes.remember(name, reason, blackholes)
+		up.logger.Printf("ECS %s %v for %s via %s; using answer without ECS", reason, blackholes, name, up.Address)
+		reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address, Reason: reason,
 			BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(plain, false)})
 		return plain, duration, nil
 	}

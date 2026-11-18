@@ -81,8 +81,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — Self-healing after interrupted writes
+    ## {{ .Tag }} — Repair ECS refusals
 
-    Leftovers from a power cut or kill no longer accumulate or break later startups. Filter subscription downloads reuse one fixed, overwritten temporary file per list instead of leaving a random .download-* file behind after each interrupted download, and leftovers are removed at startup. Unreadable Badger cache files are discarded once so the cache starts empty instead of staying disabled on every start; stats.json is kept and a database in use by another process is never touched. A disabled or rebuilt cache is now logged without debug mode. Existing installations may automatically install this release and restart.
+    Some GeoDNS names answer REFUSED to every query that carries ECS but resolve without it; clients used to receive SERVFAIL for them. Such REFUSED replies are now retried once without ECS, remembered for 24 hours and listed with their reason in the dashboard panel. Names refused with and without ECS stay REFUSED. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.3.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.4.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

@@ -19,6 +19,7 @@ type ECSBlackholeEvent struct {
 	BlackholeAddresses []string
 	PublicAddresses    []string
 	Remembered         bool
+	Reason             string // "blackhole" or "refused"; empty keeps the known reason
 }
 
 // ECSBlackholeDomainJSON aggregates fixes for one domain.
@@ -27,6 +28,7 @@ type ECSBlackholeDomainJSON struct {
 	Upstream           string    `json:"upstream"`
 	BlackholeAddresses []string  `json:"blackhole_addresses"`
 	PublicAddresses    []string  `json:"public_addresses"`
+	Reason             string    `json:"reason,omitempty"` // "blackhole" or "refused"
 	Count              uint64    `json:"count"`
 	FirstSeen          time.Time `json:"first_seen"`
 	LastSeen           time.Time `json:"last_seen"`
@@ -69,6 +71,9 @@ func (s *Stats) RecordECSBlackholeFallback(event ECSBlackholeEvent) {
 	entry.sequence = s.ecsBlackholeSequence
 	if event.Upstream != "" {
 		entry.Upstream = event.Upstream
+	}
+	if event.Reason != "" {
+		entry.Reason = event.Reason
 	}
 	entry.BlackholeAddresses = mergeAddressFamilies(entry.BlackholeAddresses, event.BlackholeAddresses)
 	entry.PublicAddresses = mergeAddressFamilies(entry.PublicAddresses, event.PublicAddresses)

@@ -156,12 +156,15 @@ function updateECSFixes(e) {
         // Small screens hide the blackhole column; show it under the domain instead.
         var inline = document.createElement('div'); inline.className = 'addr-inline-sm';
         var inlineLabel = document.createElement('span'); inlineLabel.textContent = 'ECS 返回 ';
-        var inlineAddr = document.createElement('s'); inlineAddr.textContent = (d.blackhole_addresses || []).join(', ') || '-';
+        var inlineAddr = document.createElement('s');
+        inlineAddr.textContent = d.reason === 'refused' ? 'REFUSED' : ((d.blackhole_addresses || []).join(', ') || '-');
         inline.append(inlineLabel, inlineAddr);
         name.appendChild(inline);
         name.title = shown + (d.upstream ? '\n上游: ' + d.upstream : '') +
             (d.first_seen ? '\n首次发现: ' + new Date(d.first_seen).toLocaleString() : '');
-        var blackhole = document.createElement('td'); blackhole.className = 'hide-sm'; blackhole.appendChild(makeAddressList(d.blackhole_addresses, 'blackhole'));
+        var blackhole = document.createElement('td'); blackhole.className = 'hide-sm';
+        // Refused names have no blackhole addresses: show the rejection itself.
+        blackhole.appendChild(d.reason === 'refused' ? makeAddressList(['REFUSED'], 'blackhole') : makeAddressList(d.blackhole_addresses, 'blackhole'));
         var fixed = document.createElement('td'); fixed.appendChild(makeAddressList(d.public_addresses, 'public'));
         var count = document.createElement('td'); count.className = 'number-cell'; count.textContent = fmt(d.count || 0);
         var seen = document.createElement('td'); seen.className = 'hide-sm dim';

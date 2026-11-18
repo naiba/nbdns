@@ -100,6 +100,41 @@ type ECSBlackholeFallback struct {
 	BlackholeAddresses []string // From the ECS answer that triggered detection
 	PublicAddresses    []string // From the answer actually served
 	Remembered         bool     // Served from memory without a new ECS probe
+	Reason             string   // ECSFallbackReasonBlackhole or ECSFallbackReasonRefused
+}
+
+const (
+	// ECSFallbackReasonBlackhole: the ECS answer contained special-use addresses.
+	ECSFallbackReasonBlackhole = "blackhole"
+	// ECSFallbackReasonRefused: the ECS query was REFUSED but the name resolves
+	// without ECS. Some GeoDNS names refuse every query that carries ECS, which
+	// used to reach clients as SERVFAIL.
+	ECSFallbackReasonRefused = "refused"
+)
+
+// isUsableReply is an answer worth serving instead of a failed ECS probe.
+func isUsableReply(msg *dns.Msg) bool {
+	return msg != nil && !msg.Truncated && (msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
+}
+
+// ecsFallbackReason reports why an ECS reply must be retried without ECS, if at all.
+func ecsFallbackReason(msg *dns.Msg) string {
+	switch {
+	case msg != nil && msg.Rcode == dns.RcodeRefused:
+		return ECSFallbackReasonRefused
+	case hasECSBlackhole(msg):
+		return ECSFallbackReasonBlackhole
+	}
+	return ""
+}
+
+// acceptsECSFallback reports whether the retry without ECS repairs the reply:
+// blackholes need a fully public answer, refusals any usable non-blackhole one.
+func acceptsECSFallback(reason string, plain *dns.Msg) bool {
+	if reason == ECSFallbackReasonBlackhole {
+		return isPublicAddressAnswer(plain)
+	}
+	return isUsableReply(plain) && !hasECSBlackhole(plain)
 }
 
 type ecsBlackholeReportKey struct{}
@@ -147,6 +182,7 @@ type ecsBlackholeMemory struct {
 type ecsBlackholeMemoryEntry struct {
 	expires    time.Time
 	sequence   uint64 // Breaks expiry ties deterministically
+	reason     string
 	blackholes []string
 }
 
@@ -154,20 +190,20 @@ func ecsBlackholeMemoryKey(name string) string {
 	return strings.ToLower(dns.Fqdn(name))
 }
 
-// lookup returns the blackhole addresses seen when the name was remembered.
-func (m *ecsBlackholeMemory) lookup(name string) ([]string, bool) {
+// lookup returns why the name was remembered and the blackholes seen then.
+func (m *ecsBlackholeMemory) lookup(name string) (reason string, blackholes []string, ok bool) {
 	key := ecsBlackholeMemoryKey(name)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	entry, ok := m.entries[key]
 	if ok && time.Now().After(entry.expires) {
 		delete(m.entries, key)
-		return nil, false
+		return "", nil, false
 	}
-	return entry.blackholes, ok
+	return entry.reason, entry.blackholes, ok
 }
 
-func (m *ecsBlackholeMemory) remember(name string, blackholes []string) {
+func (m *ecsBlackholeMemory) remember(name, reason string, blackholes []string) {
 	key := ecsBlackholeMemoryKey(name)
 	now := time.Now()
 	m.mu.Lock()
@@ -195,5 +231,5 @@ func (m *ecsBlackholeMemory) remember(name string, blackholes []string) {
 		}
 	}
 	m.sequence++
-	m.entries[key] = ecsBlackholeMemoryEntry{expires: now.Add(ecsBlackholeMemoryTTL), sequence: m.sequence, blackholes: blackholes}
+	m.entries[key] = ecsBlackholeMemoryEntry{expires: now.Add(ecsBlackholeMemoryTTL), sequence: m.sequence, reason: reason, blackholes: blackholes}
 }

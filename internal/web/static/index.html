@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <title>NbDNS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=3.4.0">
+    <link rel="stylesheet" href="style.css?v=3.5.0">
 </head>
 <body>
     <nav>
@@ -85,7 +85,7 @@
             <div class="panel-head ranking-head">
                 <div>
                     <h3 id="ecs-fix-title">ECS 黑洞自动修复</h3>
-                    <p class="panel-subtitle">部分服务会对特定地区的 ECS 返回 169.254.x.x、0.0.0.0 等不可用地址，导致网站打不开。检测到后自动去掉 ECS 重查，只采用全部为公网地址的结果；真实解析到内网的域名不受影响。</p>
+                    <p class="panel-subtitle">部分服务会对特定地区的 ECS 返回 169.254.x.x、0.0.0.0 等不可用地址，或直接拒绝解析（REFUSED），导致网站打不开。检测到后自动去掉 ECS 重查，只采用修复成功的结果；真实解析到内网的域名不受影响。</p>
                 </div>
                 <span class="status-pill" id="ecs-fix-status" data-status="">-</span>
             </div>
@@ -97,7 +97,7 @@
             <div class="tbl-wrap">
                 <table class="ecs-fix-table">
                     <thead>
-                        <tr><th>域名</th><th class="hide-sm">ECS 返回（黑洞）</th><th>修复后</th><th class="num-head">次数</th><th class="hide-sm">最近</th></tr>
+                        <tr><th>域名</th><th class="hide-sm">ECS 返回</th><th>修复后</th><th class="num-head">次数</th><th class="hide-sm">最近</th></tr>
                     </thead>
                     <tbody id="ecs-fix-tbody">
                         <tr><td colspan="5" class="empty">加载中</td></tr>
@@ -170,6 +170,6 @@
 
     <footer>NbDNS — 智能 DNS 中继</footer>
 
-    <script src="app.js?v=3.4.0"></script>
+    <script src="app.js?v=3.5.0"></script>
 </body>
 </html>

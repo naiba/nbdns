@@ -92,3 +92,44 @@ func TestECSBlackholeFixNotRecountedOnCacheHit(t *testing.T) {
 		t.Errorf("cached repaired answer recounted: fixed = %d, want 1", got)
 	}
 }
+
+// GeoDNS names that refuse any query carrying ECS used to reach clients as
+// SERVFAIL; they must be resolved without ECS and recorded as refused.
+func TestECSRefusedNameResolvesInsteadOfServfail(t *testing.T) {
+	var config model.Config
+	if err := json.Unmarshal([]byte(`{"ecs":"180.152.0.0/24","timeout":2}`), &config); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &dns.Server{PacketConn: conn, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		if opt := req.IsEdns0(); opt != nil {
+			for _, option := range opt.Option {
+				if _, ok := option.(*dns.EDNS0_SUBNET); ok {
+					_ = w.WriteMsg(new(dns.Msg).SetRcode(req, dns.RcodeRefused))
+					return
+				}
+			}
+		}
+		resp := new(dns.Msg).SetReply(req)
+		resp.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("203.0.113.20")}}
+		_ = w.WriteMsg(resp)
+	})}
+	go func() { _ = server.ActivateAndServe() }()
+	t.Cleanup(func() { _ = server.Shutdown() })
+	up := &model.Upstream{Address: "udp://" + conn.LocalAddr().String()}
+	up.Init(&config, logger.New(false))
+	recorder := stats.NewStats()
+	h := NewHandler(false, []*model.Upstream{up}, t.TempDir(), logger.New(false), recorder)
+
+	resp := h.HandleDnsMsg(new(dns.Msg).SetQuestion("refused.example.", dns.TypeA), "192.0.2.10", "")
+	if resp.Rcode != dns.RcodeSuccess || len(resp.Answer) != 1 {
+		t.Fatalf("rcode=%d answers=%v, want the answer without ECS", resp.Rcode, resp.Answer)
+	}
+	got := recorder.GetSnapshot().ECSBlackhole
+	if got.Fixed != 1 || len(got.Domains) != 1 || got.Domains[0].Reason != "refused" || len(got.Domains[0].BlackholeAddresses) != 0 {
+		t.Errorf("stats = %+v", got)
+	}
+}

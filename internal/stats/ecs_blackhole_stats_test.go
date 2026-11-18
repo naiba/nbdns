@@ -123,3 +123,27 @@ func TestECSBlackholeAddressesMergePerFamily(t *testing.T) {
 		t.Errorf("blackhole addresses = %v, want %v", got.BlackholeAddresses, want)
 	}
 }
+
+func TestECSFixReasonIsRecordedAndPersisted(t *testing.T) {
+	s := NewStats()
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "refused.example.", Reason: "refused", PublicAddresses: []string{"203.0.113.20"}})
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "geo-blocked.example.", Reason: "blackhole",
+		BlackholeAddresses: []string{"169.254.0.2"}, PublicAddresses: []string{"203.0.113.10"}})
+	// A remembered fix without a reason (older callers) keeps the known reason.
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "refused.example.", PublicAddresses: []string{"203.0.113.20"}})
+	dataPath := t.TempDir()
+	if err := s.Save(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded := NewStats()
+	if err := loaded.Load(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	reasons := map[string]string{}
+	for _, d := range loaded.GetSnapshot().ECSBlackhole.Domains {
+		reasons[d.Domain] = d.Reason
+	}
+	if reasons["refused.example."] != "refused" || reasons["geo-blocked.example."] != "blackhole" {
+		t.Errorf("reasons = %v", reasons)
+	}
+}

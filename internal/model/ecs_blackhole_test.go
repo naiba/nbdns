@@ -232,16 +232,16 @@ func TestECSBlackholeFallbackStatus(t *testing.T) {
 func TestECSBlackholeMemoryEvictsEarliestExpiryWhenFull(t *testing.T) {
 	var memory ecsBlackholeMemory
 	for i := 0; i < ecsBlackholeMemoryCapacity; i++ {
-		memory.remember("d"+strconv.Itoa(i)+".example.", nil)
+		memory.remember("d"+strconv.Itoa(i)+".example.", ECSFallbackReasonBlackhole, nil)
 	}
-	memory.remember("newest.example.", []string{"169.254.0.2"})
-	if blackholes, ok := memory.lookup("newest.example."); !ok || len(blackholes) != 1 {
+	memory.remember("newest.example.", ECSFallbackReasonBlackhole, []string{"169.254.0.2"})
+	if reason, blackholes, ok := memory.lookup("newest.example."); !ok || len(blackholes) != 1 || reason != ECSFallbackReasonBlackhole {
 		t.Fatal("a full memory must still remember newly detected domains")
 	}
-	if _, ok := memory.lookup("d0.example."); ok {
+	if _, _, ok := memory.lookup("d0.example."); ok {
 		t.Error("the entry expiring first must be evicted")
 	}
-	if _, ok := memory.lookup("d1.example."); !ok {
+	if _, _, ok := memory.lookup("d1.example."); !ok {
 		t.Error("only one entry may be evicted")
 	}
 	memory.mu.Lock()

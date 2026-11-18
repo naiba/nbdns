@@ -31,7 +31,7 @@
     "ecs_blackhole_fallback": {
       "type": "boolean",
       "default": true,
-      "description": "ECS 应答含 169.254.0.0/16 等特殊用途地址时，向同一上游去掉 ECS 重查；重查结果全为公网地址才采用，并在 24 小时内对该域名不带 ECS 查询。"
+      "description": "ECS 应答含 169.254.0.0/16 等特殊用途地址，或带 ECS 被拒绝（REFUSED）时，向同一上游去掉 ECS 重查；黑洞仅在重查结果全为公网地址时采用，拒绝在重查成功时采用，并在 24 小时内对该域名不带 ECS 查询。"
     },
     "socks_proxy": {
       "type": "string",
