@@ -83,6 +83,6 @@ release:
   header: |
     ## {{ .Tag }} — Safer, smaller statistics saves
 
-    data/cache/stats.json is now replaced atomically (temporary file, flush, rename), so a power cut during a save no longer leaves a half-written file that loses every statistic; leftovers from interrupted saves are cleaned up at startup. Statistics are written as compact JSON, about 31% fewer bytes per save on flash storage, and file writes no longer hold the statistics lock. Existing installations may automatically install this release and restart.
+    data/cache/stats.json is now replaced atomically through a single fixed, overwritten temporary file (flush, rename), so a power cut during a save no longer leaves a half-written file that loses every statistic and temporary files never accumulate. A save stuck on stalled storage no longer blocks later saves: they wait at most 3 seconds, retry on the next interval and resume once storage recovers. Failed saves are logged without debug mode. Statistics are written as compact JSON, about 31% fewer bytes per save on flash storage, and file writes no longer hold the statistics lock. Existing installations may automatically install this release and restart.
 
     See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.2.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

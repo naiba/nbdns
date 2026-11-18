@@ -192,7 +192,8 @@ func main() {
 	go func() {
 		for range statsSaveTicker.C {
 			if err := statsRecorder.Save(dataPath); err != nil {
-				debugLogger.Printf("Failed to save stats to disk: %v", err)
+				// Not debug-only: a persistently failing save must be visible.
+				log.Printf("Failed to save stats to disk: %v", err)
 			} else {
 				debugLogger.Printf("Stats saved successfully to disk")
 			}

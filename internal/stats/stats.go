@@ -2,6 +2,7 @@ package stats
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,13 @@ const (
 	topClientLimit = 10
 	topDomainLimit = 50
 )
+
+// ErrSaveInProgress means a previous save has not finished, typically because
+// storage is stalled; the caller should simply retry on its next interval.
+var ErrSaveInProgress = errors.New("previous stats save still in progress")
+
+// saveWaitTimeout bounds how long a save waits for a previous one.
+var saveWaitTimeout = 3 * time.Second
 
 // StatsRecorder 定义统计接口
 type StatsRecorder interface {
@@ -52,6 +60,10 @@ type Stats struct {
 	// 上游服务器统计
 	upstreamStats map[string]*UpstreamStats
 	mu            sync.RWMutex
+	// One save at a time: saves share a fixed temporary file (temporaryPathFor).
+	// A channel, not a mutex, so waiting is bounded (see Save).
+	saveSlot         chan struct{}
+	beforeStatsWrite func() // Test hook
 
 	// Top N 统计
 	topClients        *TopNTracker // 客户端 IP Top N
@@ -80,6 +92,7 @@ func NewStats() *Stats {
 		StartTime:           now,
 		StatsStartTime:      now,
 		upstreamStats:       make(map[string]*UpstreamStats),
+		saveSlot:            make(chan struct{}, 1),
 		ecsBlackholeDomains: make(map[string]*ecsBlackholeDomain),
 		topClients:          NewTopNTracker(100), // 最多保留 100 个客户端 IP
 		topDomains:          NewTopNTracker(200), // 最多保留 200 个域名
@@ -643,6 +656,17 @@ func (t *TopNTracker) GetTopN(n int) []TopNItem {
 
 // Save 保存统计数据到 JSON 文件
 func (s *Stats) Save(dataPath string) error {
+	// A save stuck in the kernel (stalled SD card) must not queue later saves
+	// forever: give up after saveWaitTimeout and let the next interval retry.
+	// The bound also keeps shutdown saves inside procd's 5s kill timeout.
+	timer := time.NewTimer(saveWaitTimeout)
+	defer timer.Stop()
+	select {
+	case s.saveSlot <- struct{}{}:
+	case <-timer.C:
+		return ErrSaveInProgress
+	}
+	defer func() { <-s.saveSlot }()
 	data, err := s.marshalPersistent()
 	if err != nil {
 		return err
@@ -658,6 +682,9 @@ func (s *Stats) Save(dataPath string) error {
 	// 写盘和 fsync 不持有统计锁，避免存储卡慢写阻塞查询统计。
 	statsFile := filepath.Join(statsPath, "stats.json")
 	return replaceFileAtomically(statsFile, func(f *os.File) error {
+		if s.beforeStatsWrite != nil {
+			s.beforeStatsWrite()
+		}
 		_, err := f.Write(data)
 		return err
 	})
@@ -725,12 +752,8 @@ func persistentTopNItems(tracker *TopNTracker) []PersistentTopNItem {
 // Load 从 JSON 文件加载统计数据
 func (s *Stats) Load(dataPath string) error {
 	statsFile := filepath.Join(dataPath, "cache", "stats.json")
-	// Temporary files from a save interrupted by power loss (see replaceFileAtomically).
-	if orphans, err := filepath.Glob(filepath.Join(dataPath, "cache", ".stats.json.tmp-*")); err == nil {
-		for _, orphan := range orphans {
-			_ = os.Remove(orphan)
-		}
-	}
+	// The temporary file of a save interrupted by power loss (see replaceFileAtomically).
+	_ = os.RemoveAll(temporaryPathFor(statsFile))
 
 	// 检查文件是否存在
 	if _, err := os.Stat(statsFile); os.IsNotExist(err) {
