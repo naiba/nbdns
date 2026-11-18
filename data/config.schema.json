@@ -124,7 +124,7 @@
       "type": "integer",
       "minimum": 0,
       "default": 5,
-      "description": "统计保存间隔（分钟），0 使用默认值。"
+      "description": "统计保存间隔（分钟），0 使用默认值。调大可减少存储卡写入，崩溃或断电时最多丢失这段时间的统计。"
     },
     "custom_records": {
       "type": "array",

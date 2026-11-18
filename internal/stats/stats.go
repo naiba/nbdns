@@ -643,6 +643,27 @@ func (t *TopNTracker) GetTopN(n int) []TopNItem {
 
 // Save 保存统计数据到 JSON 文件
 func (s *Stats) Save(dataPath string) error {
+	data, err := s.marshalPersistent()
+	if err != nil {
+		return err
+	}
+
+	// 确保目录存在
+	statsPath := filepath.Join(dataPath, "cache")
+	if err := os.MkdirAll(statsPath, 0755); err != nil {
+		return err
+	}
+
+	// 原子替换：断电时保留上一份完整的统计，而不是留下写了一半的文件。
+	// 写盘和 fsync 不持有统计锁，避免存储卡慢写阻塞查询统计。
+	statsFile := filepath.Join(statsPath, "stats.json")
+	return replaceFileAtomically(statsFile, func(f *os.File) error {
+		_, err := f.Write(data)
+		return err
+	})
+}
+
+func (s *Stats) marshalPersistent() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -678,21 +699,8 @@ func (s *Stats) Save(dataPath string) error {
 	persistent.TopDomains = persistentTopNItems(s.topDomains)
 	persistent.TopBlockedDomains = persistentTopNItems(s.topBlockedDomains)
 
-	// 序列化为 JSON
-	data, err := json.MarshalIndent(persistent, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	// 确保目录存在
-	statsPath := filepath.Join(dataPath, "cache")
-	if err := os.MkdirAll(statsPath, 0755); err != nil {
-		return err
-	}
-
-	// 写入文件
-	statsFile := filepath.Join(statsPath, "stats.json")
-	return os.WriteFile(statsFile, data, 0644)
+	// 紧凑 JSON：每隔几分钟整份重写，缩进约占文件的三分之一，徒增存储卡写入。
+	return json.Marshal(persistent)
 }
 
 func persistentTopNItems(tracker *TopNTracker) []PersistentTopNItem {
@@ -717,6 +725,12 @@ func persistentTopNItems(tracker *TopNTracker) []PersistentTopNItem {
 // Load 从 JSON 文件加载统计数据
 func (s *Stats) Load(dataPath string) error {
 	statsFile := filepath.Join(dataPath, "cache", "stats.json")
+	// Temporary files from a save interrupted by power loss (see replaceFileAtomically).
+	if orphans, err := filepath.Glob(filepath.Join(dataPath, "cache", ".stats.json.tmp-*")); err == nil {
+		for _, orphan := range orphans {
+			_ = os.Remove(orphan)
+		}
+	}
 
 	// 检查文件是否存在
 	if _, err := os.Stat(statsFile); os.IsNotExist(err) {
