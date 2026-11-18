@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/naiba/nbdns/pkg/utils"
 )
 
 // 每个域名只保留有限数量的高频客户端候选。榜单只展示 Top 10，额外容量用于
@@ -60,7 +62,7 @@ type Stats struct {
 	// 上游服务器统计
 	upstreamStats map[string]*UpstreamStats
 	mu            sync.RWMutex
-	// One save at a time: saves share a fixed temporary file (temporaryPathFor).
+	// One save at a time: saves share a fixed temporary file (utils.TemporaryPathFor).
 	// A channel, not a mutex, so waiting is bounded (see Save).
 	saveSlot         chan struct{}
 	beforeStatsWrite func() // Test hook
@@ -681,7 +683,7 @@ func (s *Stats) Save(dataPath string) error {
 	// 原子替换：断电时保留上一份完整的统计，而不是留下写了一半的文件。
 	// 写盘和 fsync 不持有统计锁，避免存储卡慢写阻塞查询统计。
 	statsFile := filepath.Join(statsPath, "stats.json")
-	return replaceFileAtomically(statsFile, func(f *os.File) error {
+	return utils.ReplaceFileAtomically(statsFile, 0644, func(f *os.File) error {
 		if s.beforeStatsWrite != nil {
 			s.beforeStatsWrite()
 		}
@@ -752,8 +754,8 @@ func persistentTopNItems(tracker *TopNTracker) []PersistentTopNItem {
 // Load 从 JSON 文件加载统计数据
 func (s *Stats) Load(dataPath string) error {
 	statsFile := filepath.Join(dataPath, "cache", "stats.json")
-	// The temporary file of a save interrupted by power loss (see replaceFileAtomically).
-	_ = os.RemoveAll(temporaryPathFor(statsFile))
+	// The temporary file of a save interrupted by power loss (see utils.ReplaceFileAtomically).
+	_ = os.RemoveAll(utils.TemporaryPathFor(statsFile))
 
 	// 检查文件是否存在
 	if _, err := os.Stat(statsFile); os.IsNotExist(err) {

@@ -81,8 +81,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — Safer, smaller statistics saves
+    ## {{ .Tag }} — Self-healing after interrupted writes
 
-    data/cache/stats.json is now replaced atomically through a single fixed, overwritten temporary file (flush, rename), so a power cut during a save no longer leaves a half-written file that loses every statistic and temporary files never accumulate. A save stuck on stalled storage no longer blocks later saves: they wait at most 3 seconds, retry on the next interval and resume once storage recovers. Failed saves are logged without debug mode. Statistics are written as compact JSON, about 31% fewer bytes per save on flash storage, and file writes no longer hold the statistics lock. Existing installations may automatically install this release and restart.
+    Leftovers from a power cut or kill no longer accumulate or break later startups. Filter subscription downloads reuse one fixed, overwritten temporary file per list instead of leaving a random .download-* file behind after each interrupted download, and leftovers are removed at startup. Unreadable Badger cache files are discarded once so the cache starts empty instead of staying disabled on every start; stats.json is kept and a database in use by another process is never touched. A disabled or rebuilt cache is now logged without debug mode. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.2.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.3.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

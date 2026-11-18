@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdlog "log"
 	"net"
 	"strconv"
 	"strings"
@@ -58,8 +59,8 @@ func NewHandler(builtInCache bool,
 		var diskCache *cache.BadgerCache
 		diskCache, err = cache.NewBadgerCache(dataPath, log)
 		if err != nil {
-			log.Printf("Failed to initialize BadgerDB cache: %v", err)
-			log.Printf("Cache will be disabled")
+			// Standard log: running without any cache must be visible without debug.
+			stdlog.Printf("Failed to initialize BadgerDB cache, cache disabled: %v", err)
 			c = nil
 		} else {
 			c = cache.NewMemoryCache(diskCache, 2048, 8<<20)

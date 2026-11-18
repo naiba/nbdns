@@ -81,7 +81,7 @@ func NewBadgerCache(dataPath string, log logger.Logger) (*BadgerCache, error) {
 	// 禁用内部日志
 	opts.Logger = nil
 
-	db, err := badger.Open(opts)
+	db, err := openBadgerRecovering(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}

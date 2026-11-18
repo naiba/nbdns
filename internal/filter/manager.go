@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/naiba/nbdns/pkg/utils"
 )
 
 const maxSubscriptionBytes = 32 << 20
@@ -130,6 +132,7 @@ func (m *Manager) Snapshot() Snapshot {
 func (m *Manager) LoadInitial() error {
 	m.refreshMu.Lock()
 	defer m.refreshMu.Unlock()
+	m.removeInterruptedDownloads()
 	next := New()
 	statuses := make([]SourceStatus, len(m.sources))
 	var errs []error
@@ -310,23 +313,31 @@ func saveCache(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".download-*")
-	if err != nil {
+	// Fixed temporary name: random ".download-*" names accumulated one file per
+	// interrupted download, since the deferred cleanup never ran after a power cut.
+	return utils.ReplaceFileAtomically(path, 0600, func(f *os.File) error {
+		_, err := f.Write(data)
 		return err
+	})
+}
+
+// removeInterruptedDownloads clears temporaries of downloads cut short by power
+// loss or a kill, including the random names used before the fixed one.
+func (m *Manager) removeInterruptedDownloads() {
+	dirs := make(map[string]bool)
+	for _, source := range m.sources {
+		if source.remote {
+			dirs[filepath.Dir(source.cachePath)] = true
+			_ = os.RemoveAll(utils.TemporaryPathFor(source.cachePath))
+		}
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
+	for dir := range dirs {
+		if legacy, err := filepath.Glob(filepath.Join(dir, ".download-*")); err == nil {
+			for _, leftover := range legacy {
+				_ = os.RemoveAll(leftover)
+			}
+		}
 	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
 }
 
 func sanitizeError(err error, s source) string {

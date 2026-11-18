@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/naiba/nbdns/pkg/utils"
 )
 
 func TestSaveWritesCompactJSONWithoutLeftovers(t *testing.T) {
@@ -59,7 +61,7 @@ func TestReplaceFileAtomicallyKeepsOldFileOnFailedWrite(t *testing.T) {
 	}
 	// Simulates power loss or a full card in the middle of writing.
 	failure := errors.New("disk full")
-	err := replaceFileAtomically(target, func(f *os.File) error {
+	err := utils.ReplaceFileAtomically(target, 0644, func(f *os.File) error {
 		if _, err := f.Write([]byte(`{"total_qu`)); err != nil {
 			return err
 		}
@@ -80,7 +82,7 @@ func TestReplaceFileAtomicallyKeepsOldFileOnFailedWrite(t *testing.T) {
 		t.Errorf("temporary file left behind: %d entries", len(entries))
 	}
 
-	if err := replaceFileAtomically(target, func(f *os.File) error {
+	if err := utils.ReplaceFileAtomically(target, 0644, func(f *os.File) error {
 		_, err := f.Write([]byte(`{"total_queries":43}`))
 		return err
 	}); err != nil {
