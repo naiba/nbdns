@@ -19,8 +19,9 @@ type Stats struct {
 
 type node struct {
 	children map[string]*node
-	blocked  bool
+	blocked  bool // Matches the name and all subdomains
 	allowed  bool
+	exact    bool // Matches the name only (domain lists' "full:" entries)
 }
 
 type Filter struct {
@@ -56,6 +57,7 @@ func (f *Filter) Blocked(name string) bool {
 		blocked = blocked || n.blocked
 		allowed = allowed || n.allowed
 		if index < 0 {
+			blocked = blocked || n.exact
 			break
 		}
 		name = name[:index]
@@ -64,6 +66,25 @@ func (f *Filter) Blocked(name string) bool {
 }
 
 func (f *Filter) add(domain string, allow bool) {
+	n := f.insert(domain)
+	if allow {
+		n.allowed = true
+	} else {
+		n.blocked = true
+	}
+}
+
+// addDomain records a domain list entry: exact matches only the name itself.
+func (f *Filter) addDomain(domain string, exact bool) {
+	n := f.insert(domain)
+	if exact {
+		n.exact = true
+	} else {
+		n.blocked = true
+	}
+}
+
+func (f *Filter) insert(domain string) *node {
 	n := &f.root
 	for {
 		index := strings.LastIndexByte(domain, '.')
@@ -88,11 +109,7 @@ func (f *Filter) add(domain string, allow bool) {
 		}
 		domain = domain[:index]
 	}
-	if allow {
-		n.allowed = true
-	} else {
-		n.blocked = true
-	}
+	return n
 }
 
 func validDomain(domain string) bool {

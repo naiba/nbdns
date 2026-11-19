@@ -226,6 +226,15 @@
           },
           "default": [],
           "description": "a.com 仅匹配根域名；.a.com 匹配子域名；. 匹配所有。命中专用上游后不使用默认上游。"
+        },
+        "match_lists": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "域名列表订阅（HTTPS URL）或 data/ 下的本地文件，与 match 合并生效；支持 dnsmasq（server=/域名/…，如 dnsmasq-china-list）、纯域名、full:/domain:、DOMAIN-SUFFIX,/DOMAIN, 格式。随 filter_update_interval_hours 更新；未变化时不重新下载（ETag）、不重写缓存。首次下载完成前这些域名使用默认上游。"
         }
       },
       "allOf": [

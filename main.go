@@ -107,6 +107,10 @@ func main() {
 		snapshot := filterManager.Snapshot()
 		log.Printf("过滤名单已加载: %d 条规则, %d 条不支持的规则已跳过", snapshot.Rules, snapshot.Unsupported)
 	}
+	upstreamLists, err := loadMatchLists(dataPath, config.Upstreams)
+	if err != nil {
+		log.Fatalf("上游域名列表配置无效: %v", err)
+	}
 	dns.HandleFunc(".", upstreamHandler.HandleRequest)
 
 	// Setup graceful shutdown
@@ -149,9 +153,11 @@ func main() {
 		webHandler.SetFilterStatus(filterManager.Snapshot)
 	}
 	webHandler.SetECSBlackholeStatus(config.ECSBlackholeFallbackStatus)
+	webHandler.SetMatchListStatus(upstreamLists.Snapshot)
 	webHandler.RegisterRoutes(webServerHandler)
 	updateContext, cancelFilterUpdates := context.WithCancel(context.Background())
 	defer cancelFilterUpdates()
+	upstreamLists.Run(updateContext, time.Duration(config.FilterUpdateIntervalHours)*time.Hour)
 	if filterManager != nil {
 		interval := time.Duration(config.FilterUpdateIntervalHours) * time.Hour
 		go filterManager.Run(updateContext, interval, func(err error) {

@@ -22,10 +22,16 @@ type Handler struct {
 	logger        logger.Logger
 	filterStatus  func() filter.Snapshot
 	ecsStatus     func() string
+	matchLists    func() []filter.SourceStatus
 }
 
 func (h *Handler) SetFilterStatus(snapshot func() filter.Snapshot) {
 	h.filterStatus = snapshot
+}
+
+// SetMatchListStatus reports the upstream domain list subscriptions.
+func (h *Handler) SetMatchListStatus(status func() []filter.SourceStatus) {
+	h.matchLists = status
 }
 
 // SetECSBlackholeStatus reports whether ECS blackhole fallback is active.
@@ -48,6 +54,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// API路由
 	mux.HandleFunc("/api/stats", h.handleStats)
 	mux.HandleFunc("/api/filters", h.handleFilters)
+	mux.HandleFunc("/api/match-lists", h.handleMatchLists)
 	mux.HandleFunc("/api/stats/reset", h.handleStatsReset)
 	mux.HandleFunc("/api/version", h.handleVersion)
 	mux.HandleFunc("/api/check-update", h.handleCheckUpdate)
@@ -73,6 +80,22 @@ func (h *Handler) handleFilters(w http.ResponseWriter, r *http.Request) {
 		snapshot = h.filterStatus()
 	}
 	_ = json.NewEncoder(w).Encode(snapshot)
+}
+
+func (h *Handler) handleMatchLists(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	sources := []filter.SourceStatus{}
+	if h.matchLists != nil {
+		sources = h.matchLists()
+	}
+	_ = json.NewEncoder(w).Encode(struct {
+		Sources []filter.SourceStatus `json:"sources"`
+	}{sources})
 }
 
 // handleStats 处理统计信息请求

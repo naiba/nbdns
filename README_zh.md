@@ -83,6 +83,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 - `ecs`: 上游 ECS CIDR；省略或 `null` 继承全局，`""` 禁用，其他 CIDR 覆盖全局。
 - `proxy_enabled`: 通过 SOCKS5 代理连接
 - `match`: 仅匹配特定域名后缀
+- `match_lists`: 域名列表订阅（HTTPS）或 `data/` 下的文件，与 `match` 合并生效
 
 **域名匹配规则：**
 - `.` 匹配所有
@@ -113,7 +114,17 @@ Bootstrap 和普通 DNS 查询共用 `custom_records`，覆盖优先于缓存和
 
 `180.152.0.0/24` 是上海电信代表网段示例，并非自动检测的用户位置。ECS 向解析器及支持它的权威服务披露网段提示，不保证最近 CDN；配置上游必须支持 ECS，否则竞速胜出的答案可能未按指定位置调度。优先使用可信 DoH/DoT，必要时启用 SOCKS；加密不等于解析器内容可信。仅添加可信上游，因为最快的 NXDOMAIN 也会被采用。
 
-`match` 命中时仅查询所有命中的专用上游，否则查询无 `match` 的默认上游。默认上游不要设置 `match: ["."]`，否则会与其他专用上游共同竞速。DNS 不控制下载出口；本地 CDN 下载仍须在路由/代理端直连。
+`match` 或 `match_lists` 命中时仅查询所有命中的专用上游，否则查询两者都未配置的默认上游。默认上游不要设置 `match: ["."]`，否则会与其他专用上游共同竞速。DNS 不控制下载出口；本地 CDN 下载仍须在路由/代理端直连。
+
+`match_lists` 用于按大型域名列表分流，无需手写规则，例如把 [dnsmasq-china-list](https://github.com/felixonmars/dnsmasq-china-list) 交给国内 DoH 上游：
+
+```json
+{"address": "https://dns.example/dns-query", "match_lists": [
+  "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
+]}
+```
+
+支持 dnsmasq 的 `server=/`、`nftset=/`、`ipset=/`、`address=/` 行，纯域名（含 `.example.com`、`+.example.com`），`domain:`、`full:`（精确匹配），以及 Clash 的 `DOMAIN-SUFFIX,`、`DOMAIN,`；`regexp:` 等记为不支持。除精确匹配外，条目同时匹配其子域名。列表随 `filter_update_interval_hours` 更新，与过滤订阅相同：缓存在 `data/match_lists/`，下载失败时使用上一份有效副本；列表未变化时不重复下载（ETag）、不重写缓存；多个上游共用同一列表时只下载一次。首次下载完成前，这些域名使用默认上游。每次查询只做一次标签树查找（11 万域名约 0.1 微秒，约 7 MiB 内存）。
 
 ### DNS 广告拦截名单
 

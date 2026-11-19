@@ -81,8 +81,8 @@ changelog:
 
 release:
   header: |
-    ## {{ .Tag }} — Repair ECS refusals
+    ## {{ .Tag }} — Domain list subscriptions for upstreams
 
-    Some GeoDNS names answer REFUSED to every query that carries ECS but resolve without it; clients used to receive SERVFAIL for them. Such REFUSED replies are now retried once without ECS, remembered for 24 hours and listed with their reason in the dashboard panel. Names refused with and without ECS stay REFUSED. Existing installations may automatically install this release and restart.
+    Upstreams can take their match domains from subscribed or local domain lists with the new match_lists field, e.g. dnsmasq-china-list for a domestic DoH upstream; dnsmasq, plain, full:/domain: and Clash DOMAIN-SUFFIX formats are supported. A 110,000-domain list costs about 0.1 µs per query and 7 MiB of memory. Subscriptions, including filter lists, use ETag conditional requests and never rewrite unchanged content, reducing downloads and flash writes. Existing installations may automatically install this release and restart.
 
-    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.1.4.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.
+    See [release notes](https://github.com/naiba/nbdns/blob/{{ .Tag }}/doc/release-v2.2.0.md). No configuration migration is required from v2.0.x. v1 configurations remain incompatible with v2.

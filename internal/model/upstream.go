@@ -27,11 +27,13 @@ type Upstream struct {
 	ProxyEnabled bool     `json:"proxy_enabled,omitempty"`
 	Address      string   `json:"address,omitempty"`
 	Match        []string `json:"match,omitempty"`
+	MatchLists   []string `json:"match_lists,omitempty"` // Domain list subscriptions or files, like filter_lists
 
 	protocol, hostAndPort, host, port string
 	config                            *Config
 	ecsPrefix                         netip.Prefix
 	matchSplited                      [][]string
+	matchSets                         atomic.Pointer[[]DomainSet] // Loaded match_lists
 
 	pool      net2.ConnectionPool
 	dohClient *doh.Client
@@ -69,13 +71,46 @@ func (up *Upstream) SetLogger(log logger.Logger) {
 	up.logger = log
 }
 
+// DomainSet is a loaded domain list (see filter.NewDomainListManager).
+type DomainSet interface {
+	Contains(name string) bool
+}
+
+// SetMatchLists installs the loaded match_lists; their contents refresh in place.
+func (up *Upstream) SetMatchLists(sets ...DomainSet) {
+	up.matchSets.Store(&sets)
+}
+
+// HasMatchRules reports whether this is a dedicated upstream: it only answers
+// names matching its rules or lists, never acting as a default upstream.
+func (up *Upstream) HasMatchRules() bool {
+	return len(up.Match) > 0 || len(up.MatchLists) > 0
+}
+
 func (up *Upstream) IsMatch(domain string) bool {
-	return utils.HasMatchedRule(up.matchSplited, domain)
+	if utils.HasMatchedRule(up.matchSplited, domain) {
+		return true
+	}
+	// Lists that have not loaded yet (first start without cache) match nothing,
+	// so their names keep using the default upstreams meanwhile.
+	if sets := up.matchSets.Load(); sets != nil {
+		for _, set := range *sets {
+			if set.Contains(domain) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (up *Upstream) Validate() error {
 	if _, err := parseECS(up.EffectiveECS()); err != nil {
 		return err
+	}
+	for _, entry := range up.MatchLists {
+		if strings.TrimSpace(entry) == "" {
+			return errors.New("empty match_lists entry: " + up.Address)
+		}
 	}
 	if up.ProxyEnabled && up.protocol == "udp" {
 		return errors.New("SOCKS upstreams require TCP, TLS or HTTPS")

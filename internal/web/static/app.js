@@ -173,6 +173,36 @@ function updateECSFixes(e) {
     });
 }
 
+function subscriptionState(source) {
+    var succeeded = source.last_success && source.last_success !== '0001-01-01T00:00:00Z';
+    if (source.last_error) return source.from_cache ? '更新失败 · 使用缓存' : '更新失败';
+    if (source.from_cache) return '使用缓存';
+    return succeeded ? '正常' : '等待首次下载';
+}
+
+function updateMatchLists(data) {
+    var wrap = document.getElementById('match-lists');
+    var sources = (data && data.sources) || [];
+    wrap.hidden = !sources.length;
+    var tbody = document.getElementById('match-lists-tbody');
+    tbody.replaceChildren();
+    sources.forEach(function(source) {
+        var row = document.createElement('tr');
+        var succeeded = source.last_success && source.last_success !== '0001-01-01T00:00:00Z';
+        [source.source || '-', fmt(source.rules || 0), subscriptionState(source),
+            succeeded ? relativeTime(source.last_success) : '-'].forEach(function(value, i) {
+            var cell = document.createElement('td');
+            cell.textContent = value;
+            if (i === 0) cell.className = 'filter-source';
+            if (i === 1) cell.className = 'number-cell';
+            if (i === 2 && source.last_error) { cell.className = 'error-high'; cell.title = source.last_error; }
+            if (i === 3) { cell.className = 'hide-sm dim'; if (succeeded) cell.title = new Date(source.last_success).toLocaleString(); }
+            row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+    });
+}
+
 function updateTopClients(list) {
     var leaderboard = document.getElementById('top-clients-list');
     leaderboard.replaceChildren();
@@ -326,6 +356,8 @@ async function load() {
         updateDomainRanking(d.top_blocked_domains, 'top-blocked-domains-tbody', '暂无拦截记录');
         var filters = await fetch('/api/filters');
         if (filters.ok) updateFilters(await filters.json());
+        var lists = await fetch('/api/match-lists');
+        if (lists.ok) updateMatchLists(await lists.json());
         resetCD();
     } catch(e) {
         document.getElementById('last-update').textContent = '失败';

@@ -83,6 +83,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 - `ecs`: Upstream ECS CIDR; omitted or `null` inherits the global setting, `""` disables ECS, and a CIDR overrides it.
 - `proxy_enabled`: Connect through SOCKS5 proxy
 - `match`: Only match specific domain suffixes
+- `match_lists`: Domain list subscriptions (HTTPS) or files under `data/`, combined with `match`
 
 **Domain matching rules:**
 - `.` matches all domains
@@ -113,7 +114,17 @@ Some services geo-block by ECS: an ECS from a blocked region is answered with an
 
 `180.152.0.0/24` is a Shanghai Telecom example, not automatic client location detection. ECS discloses a network hint to resolvers and participating authoritative services and does not guarantee the nearest CDN. All racing resolvers should support ECS; otherwise the winning answer may ignore the location hint. Prefer trusted DoH/DoT, optionally through SOCKS. Encryption does not establish resolver trust; even the fastest NXDOMAIN wins.
 
-If `match` rules match, only the matching dedicated upstreams race; otherwise upstreams without `match` are used. Do not put `match: ["."]` on default upstreams, as they would also race with dedicated ones. DNS does not control download routing: local CDN downloads still need direct routing.
+If `match` rules or `match_lists` match, only the matching dedicated upstreams race; otherwise upstreams without either are used. Do not put `match: ["."]` on default upstreams, as they would also race with dedicated ones. DNS does not control download routing: local CDN downloads still need direct routing.
+
+`match_lists` routes large domain lists without listing them by hand, e.g. a domestic DoH upstream for [dnsmasq-china-list](https://github.com/felixonmars/dnsmasq-china-list):
+
+```json
+{"address": "https://dns.example/dns-query", "match_lists": [
+  "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
+]}
+```
+
+Supported entries: dnsmasq `server=/` `nftset=/` `ipset=/` `address=/` lines, plain domains (`.example.com` and `+.example.com` too), `domain:` and `full:` (exact), and Clash `DOMAIN-SUFFIX,` / `DOMAIN,`; `regexp:` and similar are counted as unsupported. Entries match the domain and its subdomains unless exact. Lists update with `filter_update_interval_hours` and are kept like filter subscriptions: cached under `data/match_lists/`, the last good copy is used when a download fails, and an unchanged list is neither downloaded again (ETag) nor rewritten. A list shared by several upstreams is downloaded once. Until the first download, its names use the default upstreams. Matching costs one label walk per query (about 0.1 µs for 110,000 domains, about 7 MiB of memory).
 
 ### DNS blocklists
 

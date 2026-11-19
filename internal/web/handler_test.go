@@ -98,3 +98,25 @@ func TestStatsEndpointECSBlackholeStatusUnknownWithoutProvider(t *testing.T) {
 		t.Errorf("domains must be an empty array: %v", section["domains"])
 	}
 }
+
+func TestMatchListEndpoint(t *testing.T) {
+	h := NewHandler(stats.NewStats(), "", make(chan struct{}, 1), logger.New(false))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/match-lists", nil))
+	if w.Code != http.StatusOK || w.Body.String() != "{\"sources\":[]}\n" {
+		t.Fatalf("without lists: %d %q", w.Code, w.Body.String())
+	}
+	h.SetMatchListStatus(func() []filter.SourceStatus {
+		return []filter.SourceStatus{{Source: "https://lists.example/cn.conf", Rules: 109506}}
+	})
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/match-lists", nil))
+	var got struct {
+		Sources []filter.SourceStatus `json:"sources"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got.Sources) != 1 || got.Sources[0].Rules != 109506 {
+		t.Errorf("with lists: %+v %v", got, err)
+	}
+}

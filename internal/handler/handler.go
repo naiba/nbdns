@@ -69,7 +69,7 @@ func NewHandler(builtInCache bool,
 	}
 	var commonUpstreams, specialUpstreams []*model.Upstream
 	for i := 0; i < len(upstreams); i++ {
-		if len(upstreams[i].Match) > 0 {
+		if upstreams[i].HasMatchRules() {
 			specialUpstreams = append(specialUpstreams, upstreams[i])
 		} else {
 			commonUpstreams = append(commonUpstreams, upstreams[i])
@@ -220,7 +220,9 @@ func upstreamCacheNamespace(upstreams []*model.Upstream) string {
 		Address string
 		Socks   bool
 		Match   []string
-		ECS     string
+		// omitempty keeps existing namespaces for upstreams without lists.
+		MatchLists []string `json:",omitempty"`
+		ECS        string
 		// Pre-repair caches may hold ECS blackholes (e.g. 169.254.0.2),
 		// so the repairing policy gets a fresh namespace. omitempty keeps the old
 		// namespace for policies that cannot repair: no ECS, or repair disabled.
@@ -228,7 +230,7 @@ func upstreamCacheNamespace(upstreams []*model.Upstream) string {
 	}
 	policies := make([]policy, 0, len(upstreams))
 	for _, up := range upstreams {
-		policies = append(policies, policy{up.Address, up.ProxyEnabled, up.Match, up.EffectiveECS(), up.EffectiveECS() != "" && up.ECSBlackholeFallbackEnabled()})
+		policies = append(policies, policy{up.Address, up.ProxyEnabled, up.Match, up.MatchLists, up.EffectiveECS(), up.EffectiveECS() != "" && up.ECSBlackholeFallbackEnabled()})
 	}
 	encoded, _ := json.Marshal(policies)
 	// Cache namespaces isolate answers produced by different ECS and upstream policies.

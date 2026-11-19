@@ -497,6 +497,10 @@ tbody tr:last-child td { border-bottom: none; }
     font: 600 11px/1.6 "SF Mono", Menlo, Consolas, monospace;
 }
 
+.match-lists { margin-top: 16px; }
+.match-lists h4 { margin-bottom: 8px; font-size: 12px; font-weight: 600; color: var(--fg2); }
+.match-lists h4 .dim { margin-left: 6px; font-weight: 400; }
+
 .filter-source {
     min-width: 200px;
     overflow-wrap: anywhere;
