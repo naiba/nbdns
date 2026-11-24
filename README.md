@@ -41,7 +41,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
   "ecs": "180.152.0.0/24",
   "timeout": 4,
   "built_in_cache": true,
-  "socks_proxy": "192.168.1.254:3838",
+  "socks_proxy": "192.0.2.254:1080",
   "bootstrap": [
     {"address": "tcp-tls://8.8.8.8:853", "proxy_enabled": true, "ecs": ""}
   ],
@@ -234,7 +234,7 @@ Grant execute permission: `chmod +x /etc/init.d/nbdns`, then enable and start: `
     {
       "name": "nas.home.arpa",
       "type": "A",
-      "value": "192.168.1.10",
+      "value": "192.168.0.10",
       "ttl": 60
     },
     {

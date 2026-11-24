@@ -145,14 +145,14 @@ func TestECSBlackholeFallbackHandlesIPv6(t *testing.T) {
 func TestECSBlackholeKeepsIntentionalPrivateAnswers(t *testing.T) {
 	// A domain that really points at a LAN address resolves privately with and
 	// without ECS; the original answer must be kept and the domain not remembered.
-	authority := &geoBlockingAuthority{answerWithECS: net.ParseIP("192.168.1.10"), answerWithoutECS: net.ParseIP("192.168.1.10")}
+	authority := &geoBlockingAuthority{answerWithECS: net.ParseIP("192.168.0.10"), answerWithoutECS: net.ParseIP("192.168.0.10")}
 	up := startGeoBlockingUpstream(t, authority, `{"ecs":"180.152.0.0/24","timeout":2}`)
 	for i := 0; i < 2; i++ {
 		resp, _, err := up.Exchange(new(dns.Msg).SetQuestion("nas.example.", dns.TypeA))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := answerAddresses(resp); len(got) != 1 || got[0] != "192.168.1.10" {
+		if got := answerAddresses(resp); len(got) != 1 || got[0] != "192.168.0.10" {
 			t.Fatalf("intentional private answer changed: %v", got)
 		}
 	}
@@ -194,7 +194,7 @@ func TestECSBlackholeFallbackCanBeDisabled(t *testing.T) {
 func TestECSBlackholeAddressClassification(t *testing.T) {
 	for address, want := range map[string]bool{
 		"169.254.0.2": true, "0.0.0.0": true, "0.1.2.3": true, "127.0.0.1": true,
-		"10.1.2.3": true, "172.16.0.1": true, "192.168.1.1": true, "100.64.0.1": true,
+		"10.1.2.3": true, "172.16.0.1": true, "192.168.0.1": true, "100.64.0.1": true,
 		"198.18.0.1": true, "224.0.0.1": true, "240.0.0.1": true, "255.255.255.255": true,
 		"::": true, "::1": true, "fe80::1": true, "fd00::1": true, "ff02::1": true,
 		"::ffff:169.254.0.2": true,

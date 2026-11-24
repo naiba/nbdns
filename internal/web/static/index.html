@@ -145,7 +145,7 @@
                     </tbody>
                 </table>
             </div>
-            <p class="panel-footnote">次数为回源时修复的应答数，缓存命中不重复计算；修复过的域名 24 小时内直接不带 ECS 查询。“无地址记录”表示去掉 ECS 后上游正常应答，但该查询类型没有地址，括号内为查询类型：苹果等设备大量发送的 HTTPS 查询，以及没有 IPv6 的 AAAA 查询，修复后通常就是这种空应答，客户端不再收到 SERVFAIL。可在配置中设置 <code>"ecs_blackhole_fallback": false</code> 关闭。</p>
+            <p class="panel-footnote">次数为回源时修复的应答数，缓存命中不重复计算；修复过的域名 24 小时内直接不带 ECS 查询。“无地址记录”表示去掉 ECS 后上游正常应答，但该查询类型没有地址，括号内为查询类型：许多系统会发送的 HTTPS 查询，以及没有 IPv6 的 AAAA 查询，修复后通常就是这种空应答，客户端不再收到 SERVFAIL。可在配置中设置 <code>"ecs_blackhole_fallback": false</code> 关闭。</p>
         </section>
 
         <section class="rankings-grid" aria-labelledby="rankings-title">

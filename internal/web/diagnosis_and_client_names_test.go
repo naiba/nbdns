@@ -82,8 +82,8 @@ func startPTRServer(t *testing.T, names map[string]string) string {
 
 func TestStatsIncludeClientNamesResolvedInBackground(t *testing.T) {
 	server := startPTRServer(t, map[string]string{
-		"10.2.0.192.in-addr.arpa.": "laptop.lan.",
-		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.": "tv.lan.",
+		"10.2.0.192.in-addr.arpa.": "client-a.example.",
+		"1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.": "client-b.example.",
 	})
 	resolver := NewClientNameResolver(server)
 	t.Cleanup(resolver.Close)
@@ -114,7 +114,7 @@ func TestStatsIncludeClientNamesResolvedInBackground(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(names) != 2 || names["192.0.2.10"] != "laptop.lan" || names["2001:db8::1"] != "tv.lan" {
+	if len(names) != 2 || names["192.0.2.10"] != "client-a.example" || names["2001:db8::1"] != "client-b.example" {
 		t.Fatalf("client names = %v", names)
 	}
 	resolver.mu.Lock()
