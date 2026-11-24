@@ -80,4 +80,14 @@ func TestQueryAdmissionRejectsOverloadAndPreservesCacheHits(t *testing.T) {
 	if r.Rcode != dns.RcodeSuccess || len(r.Answer) != 1 || calls.Load() != 3 || len(h.pendingQueries) != 0 || recorder.FailedQueries.Load() != 2 {
 		t.Fatalf("admission slots not restored or stats wrong: response=%v calls=%d stats=%+v", r, calls.Load(), recorder.GetSnapshot())
 	}
+	// Rejected queries never reached an upstream; the ranking must not blame it.
+	failed := recorder.GetSnapshot().TopFailedDomains
+	if len(failed) != 2 {
+		t.Fatalf("failed ranking = %+v", failed)
+	}
+	for _, item := range failed {
+		if len(item.Reasons) != 1 || item.Reasons[0].Reason != stats.FailureReasonOverload {
+			t.Errorf("overload reason for %s = %+v", item.Key, item.Reasons)
+		}
+	}
 }

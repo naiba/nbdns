@@ -1,12 +1,18 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
+	"strings"
+
+	"github.com/miekg/dns"
 
 	"github.com/naiba/nbdns/internal/filter"
+	"github.com/naiba/nbdns/internal/handler"
 	"github.com/naiba/nbdns/internal/stats"
 	"github.com/naiba/nbdns/pkg/logger"
 )
@@ -23,7 +29,18 @@ type Handler struct {
 	filterStatus  func() filter.Snapshot
 	ecsStatus     func() string
 	matchLists    func() []filter.SourceStatus
+	diagnose      Diagnoser
+	clientNames   *ClientNameResolver
 }
+
+// Diagnoser explains how a name resolves (handler.Handler.Diagnose).
+type Diagnoser func(ctx context.Context, name string, qtype uint16) (handler.Diagnosis, error)
+
+// SetDiagnoser enables /api/diagnose.
+func (h *Handler) SetDiagnoser(diagnose Diagnoser) { h.diagnose = diagnose }
+
+// SetClientNameResolver labels client addresses in /api/stats.
+func (h *Handler) SetClientNameResolver(resolver *ClientNameResolver) { h.clientNames = resolver }
 
 func (h *Handler) SetFilterStatus(snapshot func() filter.Snapshot) {
 	h.filterStatus = snapshot
@@ -58,6 +75,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stats/reset", h.handleStatsReset)
 	mux.HandleFunc("/api/version", h.handleVersion)
 	mux.HandleFunc("/api/check-update", h.handleCheckUpdate)
+	mux.HandleFunc("/api/diagnose", h.handleDiagnose)
 
 	// 静态文件服务
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -113,16 +131,82 @@ func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 设置响应头
+	// 不设置 Access-Control-Allow-Origin：曾经的 "*" 让局域网内任意网页都能读走
+	// 全部解析记录和客户端地址。面板与 API 同源，不需要 CORS。
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
+	response := statsResponse{StatsSnapshot: snapshot}
+	if h.clientNames != nil {
+		response.ClientNames = h.clientNames.Names(snapshotClients(snapshot))
+	}
+
 	// 编码JSON并返回
-	if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Printf("Error encoding stats JSON: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+}
+
+// statsResponse adds PTR names of client addresses to the statistics.
+type statsResponse struct {
+	stats.StatsSnapshot
+	ClientNames map[string]string `json:"client_names,omitempty"`
+}
+
+func snapshotClients(snapshot stats.StatsSnapshot) []string {
+	seen := make(map[string]bool)
+	var clients []string
+	add := func(client string) {
+		if client != "" && !seen[client] {
+			seen[client] = true
+			clients = append(clients, client)
+		}
+	}
+	for _, item := range snapshot.TopClients {
+		add(item.Key)
+	}
+	for _, ranking := range [][]stats.TopNItemJSON{snapshot.TopDomains, snapshot.TopBlockedDomains,
+		snapshot.TopPrivateAnswerDomains, snapshot.TopFailedDomains} {
+		for _, item := range ranking {
+			for _, client := range item.TopClients {
+				add(client.Client)
+			}
+		}
+	}
+	return clients
+}
+
+func (h *Handler) handleDiagnose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.diagnose == nil {
+		http.Error(w, "diagnosis unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	qtype := dns.TypeA
+	if name := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("type"))); name != "" {
+		var ok bool
+		if qtype, ok = dns.StringToType[name]; !ok {
+			http.Error(w, "unknown record type", http.StatusBadRequest)
+			return
+		}
+	}
+	result, err := h.diagnose(r.Context(), r.URL.Query().Get("name"), qtype)
+	if errors.Is(err, handler.ErrInvalidDiagnosisName) {
+		http.Error(w, "invalid domain name", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // ResetResponse 重置响应
@@ -145,7 +229,6 @@ func (h *Handler) handleStatsReset(w http.ResponseWriter, r *http.Request) {
 
 	// 设置响应头
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// 返回成功响应
 	if err := json.NewEncoder(w).Encode(ResetResponse{
@@ -176,7 +259,6 @@ func (h *Handler) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
 	if err := json.NewEncoder(w).Encode(VersionResponse{Version: ver}); err != nil {
@@ -196,7 +278,8 @@ type UpdateCheckResponse struct {
 
 // handleCheckUpdate 处理检查更新请求（生产者2：用户手动触发）
 func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	// 触发更新是写操作：GET 时任意网页用一个 <img> 就能触发，且绕过跨站写保护。
+	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -207,7 +290,6 @@ func (h *Handler) handleCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
 	// 触发后台检查更新（非阻塞）

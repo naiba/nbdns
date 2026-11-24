@@ -29,7 +29,9 @@ func dnsFlightKey(req *dns.Msg) (string, error) {
 	return string(wire), err
 }
 
-func (h *Handler) resolveCacheMiss(req *dns.Msg, cacheKey string) *dns.Msg {
+// resolveCacheMiss reports overloaded when admission rejected the query before
+// any upstream was asked, so failure statistics do not blame the upstreams.
+func (h *Handler) resolveCacheMiss(req *dns.Msg, cacheKey string) (resp *dns.Msg, overloaded bool) {
 	// Singleflight only bounds duplicate upstream work, not distinct queries or
 	// waiting clients. Reject overload before allocating a flight or queueing;
 	// cache hits and local answers have already bypassed this admission gate.
@@ -37,11 +39,11 @@ func (h *Handler) resolveCacheMiss(req *dns.Msg, cacheKey string) *dns.Msg {
 	case h.pendingQueries <- struct{}{}:
 		defer func() { <-h.pendingQueries }()
 	default:
-		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+		return new(dns.Msg).SetRcode(req, dns.RcodeServerFailure), true
 	}
 	key, err := dnsFlightKey(req)
 	if err != nil {
-		return new(dns.Msg).SetRcode(req, dns.RcodeFormatError)
+		return new(dns.Msg).SetRcode(req, dns.RcodeFormatError), false
 	}
 	// Cache misses must share the entire fetch-and-store operation, including
 	// when caching is disabled. Otherwise a cold/expired hot name fans out one
@@ -71,11 +73,11 @@ func (h *Handler) resolveCacheMiss(req *dns.Msg, cacheKey string) *dns.Msg {
 		}
 		return resp, nil
 	})
-	resp := value.(*dns.Msg)
+	resp = value.(*dns.Msg)
 	if shared {
 		// Every waiter, including the leader, needs private records before the
 		// caller restores its ID/question/EDNS or truncates a UDP response.
 		resp = resp.Copy()
 	}
-	return resp
+	return resp, false
 }

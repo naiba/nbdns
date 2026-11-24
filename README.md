@@ -64,6 +64,9 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 | ---------------- | ------------------------------------------------------------------- | -------------- |
 | `serve_addr`     | DNS service listen address                                          | Required       |
 | `web_addr`       | Web dashboard and DoH service port                                  | `0.0.0.0:8854` |
+| `web_auth` | Dashboard HTTP Basic authentication `{"username": "...", "password": "..."}` (DoH keeps `doh_server`) | Optional |
+| `web_allowed_hosts` | Extra host names the dashboard may be opened by (e.g. behind a reverse proxy) | `[]` |
+| `client_name_server` | DNS server answering PTR queries for LAN clients (usually the DHCP server, e.g. `192.0.2.1`), used to show device names | Optional |
 | `ecs` | Global ECS CIDR inherited by upstreams | Empty (no ECS) |
 | `ecs_blackhole_fallback` | Retry ECS answers containing special-use addresses (e.g. `169.254.0.2`) or REFUSED without ECS | `true` |
 | `timeout`        | Upstream timeout in seconds                                         | `4`            |
@@ -138,13 +141,15 @@ With `built_in_cache` enabled, frequently used DNS replies are served from a hot
 
 ### :chart_with_upwards_trend: Web Monitoring Dashboard
 Visit `http://localhost:8854` to view:
-- Runtime status (uptime, memory, goroutines, GC)
-- DNS query statistics (total queries, cache hit rate, failures)
-- DNS subscription status (rule counts, refresh errors and blocked queries)
-- Upstream server status (queries, error rate, last used)
-- Top 10 clients, Top 50 resolved/blocked domains, and per-domain client request breakdowns
+- The last 24 hours: queries, cache hit rate, blocked and failed queries, with an hourly trend chart. Hourly counters survive restarts; lifetime totals are shown below them
+- DNS diagnosis: enter a name to see whether a custom record or filter rule applies, which upstreams it is routed to, each upstream's answer and latency, the cache entry, and whether dnsmasq rebind protection would drop the answer. Diagnosis asks upstreams directly and changes neither statistics nor the cache
+- Upstream servers currently configured, with last-24-hour error rate, average and P95 latency of valid answers, and last use in browser local time. Statistics of upstreams removed from the configuration are discarded at startup
+- DNS subscription status (rule counts, refresh errors) and the ECS blackhole repair panel
+- Top 10 clients, Top 50 resolved, blocked and failed domains, and per-domain client request breakdowns. Failed domains (all upstreams failed, i.e. SERVFAIL unless stale cache is served) list the upstreams that failed, or that the query was rejected by `max_concurrent_queries`. With `client_name_server` set, clients are labeled with their PTR names, looked up in the background and cached for an hour
 - Top 50 domains answered with private or reserved addresses (those dnsmasq `private_net` rejects: 10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, 169.254/16, documentation ranges, `::1`, `fe80::/10`, `fd00::/8`, ...). Behind dnsmasq with rebind protection, clients get an empty answer for these names and dnsmasq logs nothing by default; add the ones you need to `rebind_domain`. Cache hits are counted too
-- Statistics reset
+- Runtime status in the footer, statistics reset, and links to the project and to the release notes of the running version
+
+The dashboard shows which device resolved which domain, so it is protected against other web pages: API responses carry no CORS headers, state-changing requests from other sites are rejected, and requests are only accepted for IP addresses, `localhost`, single-label names and names under `.lan`, `.local`, `.localdomain`, `.home`, `.home.arpa`, `.internal` or `.localhost`, which blocks DNS rebinding. Add other names, such as a reverse-proxy domain, to `web_allowed_hosts`. Set `web_auth` to require a password; it also covers `/api/*` and pprof, but not DoH.
 
 ### :lock: DoH (DNS over HTTPS)
 DoH service shares the same port as the web dashboard, accessible at: `/dns-query`

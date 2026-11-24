@@ -1,6 +1,8 @@
 var REFRESH = 3000;
+var REPO_URL = 'https://github.com/naiba/nbdns';
 var refreshTimer, countdownTimer, countdown = 0;
-var checkingUpdate = false, resetting = false;
+var checkingUpdate = false, resetting = false, diagnosing = false;
+var clientNames = {};
 
 var THEME_CYCLE = ['auto', 'light', 'dark'];
 var THEME_ICON = { auto: '◐', light: '☀', dark: '☾' };
@@ -32,64 +34,178 @@ function toggleTheme() {
     applyTheme(next);
 }
 
-function fmt(n) { return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
-function pct(n) { return n.toFixed(2) + '%'; }
+function fmt(n) { return (n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+function pct(n) { return (n || 0).toFixed(2) + '%'; }
+function ratio(part, total) { return total > 0 ? part / total * 100 : 0; }
+function setText(id, value) { document.getElementById(id).textContent = value; }
+function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+}
+function emptyRow(tbody, columns, text, className) {
+    var row = el('tr'); var cell = el('td', className || 'empty', text);
+    cell.colSpan = columns; row.appendChild(cell); tbody.appendChild(row);
+}
+function validTime(iso) { var t = Date.parse(iso); return iso && !isNaN(t) && t > 0; }
+function localTime(iso) { return validTime(iso) ? new Date(iso).toLocaleString() : ''; }
 
-function updateRuntime(r) {
-    document.getElementById('uptime').textContent = r.uptime_str || '-';
-    document.getElementById('goroutines').textContent = fmt(r.goroutines || 0);
-    document.getElementById('mem-alloc').textContent = fmt(r.mem_alloc_mb || 0) + ' MB';
-    document.getElementById('mem-sys').textContent = fmt(r.mem_sys_mb || 0) + ' MB';
-    document.getElementById('mem-total').textContent = fmt(r.mem_total_mb || 0) + ' MB';
-    document.getElementById('num-gc').textContent = fmt(r.num_gc || 0);
-    document.getElementById('stats-duration').textContent = r.stats_duration_str || '-';
+function relativeTime(iso) {
+    if (!validTime(iso)) return '-';
+    var sec = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    if (sec < 60) return '刚刚';
+    if (sec < 3600) return Math.floor(sec / 60) + ' 分钟前';
+    if (sec < 86400) return Math.floor(sec / 3600) + ' 小时前';
+    return Math.floor(sec / 86400) + ' 天前';
 }
 
-function updateQueries(q) {
-    document.getElementById('total-queries').textContent = fmt(q.total || 0);
-    document.getElementById('doh-queries').textContent = fmt(q.doh || 0);
-    document.getElementById('cache-hits').textContent = fmt(q.cache_hits || 0);
-    document.getElementById('cache-misses').textContent = fmt(q.cache_misses || 0);
-    document.getElementById('failed-queries').textContent = fmt(q.failed || 0);
-    document.getElementById('hit-rate').textContent = pct(q.hit_rate || 0);
+function ms(value) {
+    if (value < 0) return '> 5 s'; // LatencyOverflow: above the largest histogram bound.
+    if (!value) return '-';
+    return value >= 100 ? Math.round(value) + ' ms' : value.toFixed(1) + ' ms';
+}
+
+// Client addresses come from ECS or the socket; names from client_name_server PTR lookups.
+function isLoopback(address) { return /^127\./.test(address) || address === '::1'; }
+function clientLabel(address) {
+    if (!address) return '-';
+    if (clientNames[address]) return clientNames[address];
+    if (isLoopback(address)) return '本机';
+    return address;
+}
+function clientTitle(address) {
+    var label = clientLabel(address);
+    return label === address ? address : label + '（' + address + '）';
+}
+
+function updateRuntime(r) {
+    setText('uptime', r.uptime_str || '-');
+    setText('goroutines', fmt(r.goroutines));
+    setText('mem-alloc', fmt(r.mem_alloc_mb) + ' MB');
+    setText('mem-sys', fmt(r.mem_sys_mb) + ' MB');
+    setText('num-gc', fmt(r.num_gc));
+    setText('stats-duration', r.stats_duration_str ? '共 ' + r.stats_duration_str : '-');
+}
+
+function updateLifetime(q) {
+    setText('total-queries', fmt(q.total));
+    setText('hit-rate', pct(q.hit_rate));
+    setText('blocked-queries', fmt(q.blocked));
+    setText('failed-queries', fmt(q.failed));
+    setText('doh-queries', fmt(q.doh));
+}
+
+function updateRecent(r) {
+    r = r || { hours: [] };
+    setText('recent-queries', fmt(r.queries));
+    setText('recent-hit-rate', pct(r.hit_rate));
+    setText('recent-blocked', fmt(r.blocked));
+    setText('recent-failed', fmt(r.failed));
+    setText('recent-failed-rate', pct(ratio(r.failed, r.queries)));
+    setText('recent-cache', fmt(r.cache_hits) + ' / ' + fmt(r.cache_misses));
+    setText('filter-blocked', fmt(r.blocked));
+    drawTrend(r.hours || []);
+}
+
+var SVG_NS = 'http://www.w3.org/2000/svg';
+function svgRect(x, y, w, h, className) {
+    var rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y);
+    rect.setAttribute('width', w); rect.setAttribute('height', Math.max(h, 0));
+    rect.setAttribute('class', className);
+    return rect;
+}
+
+function drawTrend(hours) {
+    var svg = document.getElementById('trend-chart');
+    var axis = document.getElementById('trend-axis');
+    svg.replaceChildren(); axis.replaceChildren();
+    var width = 720, height = 120, slot = width / Math.max(hours.length, 1), bar = slot * 0.72;
+    var peak = hours.reduce(function(m, h) { return Math.max(m, h.queries || 0); }, 0);
+    hours.forEach(function(h, i) {
+        var x = i * slot + (slot - bar) / 2;
+        var scale = peak > 0 ? (height - 4) / peak : 0;
+        var group = document.createElementNS(SVG_NS, 'g');
+        var title = document.createElementNS(SVG_NS, 'title');
+        var start = new Date(h.start);
+        title.textContent = start.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) +
+            '\n查询 ' + fmt(h.queries) + ' · 缓存命中 ' + fmt(h.cache_hits) + '\n拦截 ' + fmt(h.blocked) + ' · 失败 ' + fmt(h.failed);
+        group.appendChild(title);
+        // Hover target spans the whole slot so empty hours still show their tooltip.
+        group.appendChild(svgRect(i * slot, 0, slot, height, 'trend-hit'));
+        var total = (h.queries || 0) * scale;
+        group.appendChild(svgRect(x, height - total, bar, total, 'trend-queries'));
+        var blocked = (h.blocked || 0) * scale, failed = (h.failed || 0) * scale;
+        group.appendChild(svgRect(x, height - blocked, bar, blocked, 'trend-blocked'));
+        group.appendChild(svgRect(x, height - blocked - failed, bar, failed, 'trend-failed'));
+        svg.appendChild(group);
+        if (i % 6 === 0 || i === hours.length - 1) {
+            var label = el('span', '', i === hours.length - 1 ? '现在' : String(start.getHours()).padStart(2, '0') + ':00');
+            label.style.left = (i * slot + slot / 2) / width * 100 + '%';
+            axis.appendChild(label);
+        }
+    });
 }
 
 function updateUpstream(list) {
     var tb = document.getElementById('upstream-tbody');
-    if (!list || !list.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">暂无数据</td></tr>'; return; }
-    tb.innerHTML = list.map(function(u) {
-        var c = u.error_rate > 10 ? ' class="error-high"' : '';
-        return '<tr><td>' + (u.address || '-') + '</td><td>' + fmt(u.total_queries || 0) +
-            '</td><td' + c + '>' + fmt(u.errors || 0) + '</td><td' + c + '>' + pct(u.error_rate || 0) +
-            '</td><td class="hide-sm">' + (u.last_used || '-') + '</td></tr>';
-    }).join('');
+    tb.replaceChildren();
+    if (!list || !list.length) { emptyRow(tb, 6, '暂无数据'); return; }
+    list.forEach(function(u) {
+        var row = el('tr');
+        var address = el('td', 'filter-source', u.address || '-');
+        var queries = el('td', 'number-cell', fmt(u.recent_queries));
+        queries.title = '累计 ' + fmt(u.total_queries) + ' 次';
+        var errors = el('td', 'number-cell' + (u.recent_error_rate > 10 ? ' error-high' : ''), u.recent_queries ? pct(u.recent_error_rate) : '-');
+        errors.title = '近 24 小时错误 ' + fmt(u.recent_errors) + ' 次\n累计错误 ' + fmt(u.errors) + ' 次（' + pct(u.error_rate) + '）';
+        var avg = el('td', 'number-cell', ms(u.avg_latency_ms));
+        var p95 = el('td', 'number-cell' + (u.p95_latency_ms < 0 || u.p95_latency_ms > 1000 ? ' error-high' : ''), ms(u.p95_latency_ms));
+        var used = el('td', 'hide-sm dim', u.last_used ? relativeTime(u.last_used) : '从未');
+        used.title = localTime(u.last_used);
+        row.append(address, queries, errors, avg, p95, used);
+        tb.appendChild(row);
+    });
+}
+
+function subscriptionState(source) {
+    var succeeded = validTime(source.last_success);
+    if (source.last_error) return source.from_cache ? '更新失败 · 使用缓存' : '更新失败';
+    if (source.from_cache) return '使用缓存';
+    return succeeded ? '正常' : '等待首次下载';
 }
 
 function updateFilters(data) {
-    document.getElementById('filter-rules').textContent = fmt(data.rules || 0);
-    document.getElementById('filter-unsupported').textContent = fmt(data.unsupported || 0);
-    document.getElementById('filter-blocked').textContent = fmt(data.blocked_queries || 0);
+    setText('filter-rules', fmt(data.rules));
+    setText('filter-unsupported', fmt(data.unsupported));
     var tbody = document.getElementById('filter-sources');
     tbody.replaceChildren();
-    if (!data.sources || !data.sources.length) {
-        var empty = document.createElement('tr');
-        var cell = document.createElement('td');
-        cell.colSpan = 5; cell.className = 'empty'; cell.textContent = '暂无订阅';
-        empty.appendChild(cell); tbody.appendChild(empty); return;
-    }
+    if (!data.sources || !data.sources.length) { emptyRow(tbody, 5, '暂无订阅'); return; }
     data.sources.forEach(function(source) {
-        var row = document.createElement('tr');
-        var state = source.last_error ? (source.from_cache ? '更新失败 · 使用缓存' : '更新失败')
-            : source.from_cache ? '使用缓存' : source.last_success && source.last_success !== '0001-01-01T00:00:00Z' ? '正常' : '等待首次下载';
-        var fields = [source.source || '-', fmt(source.rules || 0), fmt(source.unsupported || 0), state,
-            source.last_success && source.last_success !== '0001-01-01T00:00:00Z' ? new Date(source.last_success).toLocaleString() : '-'];
-        fields.forEach(function(value, i) {
-            var cell = document.createElement('td');
-            cell.textContent = value;
-            if (i === 0) cell.className = 'filter-source';
-            if (i === 3 && source.last_error) { cell.className = 'error-high'; cell.title = source.last_error; }
-            row.appendChild(cell);
-        });
+        var row = el('tr');
+        var state = el('td', source.last_error ? 'error-high' : '', subscriptionState(source));
+        if (source.last_error) state.title = source.last_error;
+        var success = el('td', 'hide-sm dim', validTime(source.last_success) ? relativeTime(source.last_success) : '-');
+        success.title = localTime(source.last_success);
+        row.append(el('td', 'filter-source', source.source || '-'), el('td', 'number-cell', fmt(source.rules)),
+            el('td', 'number-cell', fmt(source.unsupported)), state, success);
+        tbody.appendChild(row);
+    });
+}
+
+function updateMatchLists(data) {
+    var wrap = document.getElementById('match-lists');
+    var sources = (data && data.sources) || [];
+    wrap.hidden = !sources.length;
+    var tbody = document.getElementById('match-lists-tbody');
+    tbody.replaceChildren();
+    sources.forEach(function(source) {
+        var row = el('tr');
+        var state = el('td', source.last_error ? 'error-high' : '', subscriptionState(source));
+        if (source.last_error) state.title = source.last_error;
+        var success = el('td', 'hide-sm dim', validTime(source.last_success) ? relativeTime(source.last_success) : '-');
+        success.title = localTime(source.last_success);
+        row.append(el('td', 'filter-source', source.source || '-'), el('td', 'number-cell', fmt(source.rules)), state, success);
         tbody.appendChild(row);
     });
 }
@@ -100,30 +216,18 @@ var ECS_FIX_STATUS = {
     no_ecs: { label: '未配置 ECS', empty: '未向上游发送 ECS，不会出现 ECS 黑洞，无需修复', emptyClass: 'empty' }
 };
 
-function relativeTime(iso) {
-    var t = Date.parse(iso);
-    if (!iso || isNaN(t) || t <= 0) return '-';
-    var sec = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (sec < 60) return '刚刚';
-    if (sec < 3600) return Math.floor(sec / 60) + ' 分钟前';
-    if (sec < 86400) return Math.floor(sec / 3600) + ' 小时前';
-    return Math.floor(sec / 86400) + ' 天前';
-}
-
-function makeAddressList(addresses, kind) {
-    var wrap = document.createElement('div'); wrap.className = 'addr-list';
+function makeAddressList(addresses, kind, emptyText) {
+    var wrap = el('div', 'addr-list');
     var list = addresses || [];
     if (!list.length) {
-        var none = document.createElement('span'); none.className = 'dim'; none.textContent = '-';
+        var none = el('span', 'dim', emptyText || '-');
+        if (emptyText) none.title = '去掉 ECS 后上游正常应答，但没有该类型的地址记录';
         wrap.appendChild(none); return wrap;
     }
-    list.slice(0, 3).forEach(function(address) {
-        var chip = document.createElement('span'); chip.className = 'addr ' + kind; chip.textContent = address;
-        wrap.appendChild(chip);
-    });
+    list.slice(0, 3).forEach(function(address) { wrap.appendChild(el('span', 'addr ' + kind, address)); });
     if (list.length > 3) {
-        var more = document.createElement('span'); more.className = 'addr more';
-        more.textContent = '+' + (list.length - 3); more.title = list.slice(3).join('\n');
+        var more = el('span', 'addr more', '+' + (list.length - 3));
+        more.title = list.slice(3).join('\n');
         wrap.appendChild(more);
     }
     return wrap;
@@ -135,94 +239,46 @@ function updateECSFixes(e) {
     var pill = document.getElementById('ecs-fix-status');
     pill.textContent = info.label; pill.setAttribute('data-status', e.status || '');
     var domains = e.domains || [];
-    document.getElementById('ecs-fix-count').textContent = fmt(e.fixed || 0);
-    document.getElementById('ecs-fix-domains').textContent = fmt(domains.length);
+    setText('ecs-fix-count', fmt(e.fixed));
+    setText('ecs-fix-domains', fmt(domains.length));
     var last = document.getElementById('ecs-fix-last');
     last.textContent = domains.length ? relativeTime(domains[0].last_seen) : '-';
-    last.title = domains.length ? new Date(domains[0].last_seen).toLocaleString() : '';
+    last.title = domains.length ? localTime(domains[0].last_seen) : '';
 
     var tb = document.getElementById('ecs-fix-tbody');
     tb.replaceChildren();
-    if (!domains.length) {
-        var emptyRow = document.createElement('tr'); var emptyCell = document.createElement('td');
-        emptyCell.colSpan = 5; emptyCell.className = info.emptyClass; emptyCell.textContent = info.empty;
-        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow); return;
-    }
+    if (!domains.length) { emptyRow(tb, 5, info.empty, info.emptyClass); return; }
     domains.forEach(function(d) {
-        var row = document.createElement('tr');
-        var name = document.createElement('td'); name.className = 'domain-cell';
+        var row = el('tr');
         var shown = (d.domain || '-').replace(/\.$/, '');
-        name.textContent = shown;
+        var name = el('td', 'domain-cell', shown);
         // Small screens hide the blackhole column; show it under the domain instead.
-        var inline = document.createElement('div'); inline.className = 'addr-inline-sm';
-        var inlineLabel = document.createElement('span'); inlineLabel.textContent = 'ECS 返回 ';
-        var inlineAddr = document.createElement('s');
-        inlineAddr.textContent = d.reason === 'refused' ? 'REFUSED' : ((d.blackhole_addresses || []).join(', ') || '-');
-        inline.append(inlineLabel, inlineAddr);
+        var inline = el('div', 'addr-inline-sm');
+        inline.append(el('span', '', 'ECS 返回 '), el('s', '', d.reason === 'refused' ? 'REFUSED' : ((d.blackhole_addresses || []).join(', ') || '-')));
         name.appendChild(inline);
-        name.title = shown + (d.upstream ? '\n上游: ' + d.upstream : '') +
-            (d.first_seen ? '\n首次发现: ' + new Date(d.first_seen).toLocaleString() : '');
-        var blackhole = document.createElement('td'); blackhole.className = 'hide-sm';
+        name.title = shown + (d.upstream ? '\n上游: ' + d.upstream : '') + (d.first_seen ? '\n首次发现: ' + localTime(d.first_seen) : '');
+        var blackhole = el('td', 'hide-sm');
         // Refused names have no blackhole addresses: show the rejection itself.
         blackhole.appendChild(d.reason === 'refused' ? makeAddressList(['REFUSED'], 'blackhole') : makeAddressList(d.blackhole_addresses, 'blackhole'));
-        var fixed = document.createElement('td'); fixed.appendChild(makeAddressList(d.public_addresses, 'public'));
-        var count = document.createElement('td'); count.className = 'number-cell'; count.textContent = fmt(d.count || 0);
-        var seen = document.createElement('td'); seen.className = 'hide-sm dim';
-        seen.textContent = relativeTime(d.last_seen); seen.title = d.last_seen ? new Date(d.last_seen).toLocaleString() : '';
-        row.append(name, blackhole, fixed, count, seen); tb.appendChild(row);
-    });
-}
-
-function subscriptionState(source) {
-    var succeeded = source.last_success && source.last_success !== '0001-01-01T00:00:00Z';
-    if (source.last_error) return source.from_cache ? '更新失败 · 使用缓存' : '更新失败';
-    if (source.from_cache) return '使用缓存';
-    return succeeded ? '正常' : '等待首次下载';
-}
-
-function updateMatchLists(data) {
-    var wrap = document.getElementById('match-lists');
-    var sources = (data && data.sources) || [];
-    wrap.hidden = !sources.length;
-    var tbody = document.getElementById('match-lists-tbody');
-    tbody.replaceChildren();
-    sources.forEach(function(source) {
-        var row = document.createElement('tr');
-        var succeeded = source.last_success && source.last_success !== '0001-01-01T00:00:00Z';
-        [source.source || '-', fmt(source.rules || 0), subscriptionState(source),
-            succeeded ? relativeTime(source.last_success) : '-'].forEach(function(value, i) {
-            var cell = document.createElement('td');
-            cell.textContent = value;
-            if (i === 0) cell.className = 'filter-source';
-            if (i === 1) cell.className = 'number-cell';
-            if (i === 2 && source.last_error) { cell.className = 'error-high'; cell.title = source.last_error; }
-            if (i === 3) { cell.className = 'hide-sm dim'; if (succeeded) cell.title = new Date(source.last_success).toLocaleString(); }
-            row.appendChild(cell);
-        });
-        tbody.appendChild(row);
+        var fixed = el('td'); fixed.appendChild(makeAddressList(d.public_addresses, 'public', '无地址记录'));
+        var seen = el('td', 'hide-sm dim', relativeTime(d.last_seen)); seen.title = localTime(d.last_seen);
+        row.append(name, blackhole, fixed, el('td', 'number-cell', fmt(d.count)), seen);
+        tb.appendChild(row);
     });
 }
 
 function updateTopClients(list) {
     var leaderboard = document.getElementById('top-clients-list');
     leaderboard.replaceChildren();
-    if (!list || !list.length) {
-        var empty = document.createElement('p');
-        empty.className = 'client-leaderboard-empty'; empty.textContent = '暂无数据';
-        leaderboard.appendChild(empty); return;
-    }
+    if (!list || !list.length) { leaderboard.appendChild(el('p', 'client-leaderboard-empty', '暂无数据')); return; }
     list.slice(0, 10).forEach(function(c, i) {
-        var item = document.createElement('article');
-        item.className = 'client-rank-item' + (i < 3 ? ' rank-' + (i + 1) : '');
+        var item = el('article', 'client-rank-item' + (i < 3 ? ' rank-' + (i + 1) : ''));
         item.setAttribute('role', 'listitem');
-        var rank = document.createElement('span');
-        rank.className = 'client-rank-number'; rank.textContent = String(i + 1).padStart(2, '0');
-        var client = document.createElement('span');
-        client.className = 'client-address'; client.textContent = c.key || '-'; client.title = c.key || '';
-        var metric = document.createElement('span'); metric.className = 'client-rank-metric';
-        var count = document.createElement('strong'); count.textContent = fmt(c.count || 0);
-        var unit = document.createElement('small'); unit.textContent = '请求';
-        metric.append(count, unit); item.append(rank, client, metric); leaderboard.appendChild(item);
+        var client = el('span', 'client-address', clientLabel(c.key)); client.title = clientTitle(c.key);
+        var metric = el('span', 'client-rank-metric');
+        metric.append(el('strong', '', fmt(c.count)), el('small', '', '请求'));
+        item.append(el('span', 'client-rank-number', String(i + 1).padStart(2, '0')), client, metric);
+        leaderboard.appendChild(item);
     });
 }
 
@@ -234,54 +290,58 @@ function clientListFor(domain) {
 
 function makeClientBreakdown(domain, wasOpen) {
     var clients = clientListFor(domain);
-    if (!clients.length) {
-        var none = document.createElement('span'); none.className = 'dim'; none.textContent = '-'; return none;
-    }
-
-    var primary = document.createElement('span');
-    primary.className = 'client-primary'; primary.textContent = clients[0].client || '-';
-    primary.title = clients[0].client || '';
-    var count = document.createElement('span');
-    count.className = 'client-count'; count.textContent = fmt(clients[0].count || 0);
-    count.title = '该客户端请求数';
+    if (!clients.length) return el('span', 'dim', '-');
+    var primary = el('span', 'client-primary', clientLabel(clients[0].client)); primary.title = clientTitle(clients[0].client);
+    var count = el('span', 'client-count', fmt(clients[0].count)); count.title = '该客户端请求数';
     if (clients.length === 1) {
-        var single = document.createElement('div'); single.className = 'client-summary single';
-        single.append(primary, count); return single;
+        var single = el('div', 'client-summary single'); single.append(primary, count); return single;
     }
-
-    var details = document.createElement('details'); details.className = 'client-breakdown'; details.open = wasOpen;
-    var summary = document.createElement('summary'); summary.className = 'client-summary';
+    var details = el('details', 'client-breakdown'); details.open = wasOpen;
+    var summary = el('summary', 'client-summary');
     summary.setAttribute('aria-label', '查看该域名的客户端 Top 10');
-    var more = document.createElement('span'); more.className = 'client-more'; more.textContent = '+' + (clients.length - 1);
-    summary.append(primary, count, more); details.appendChild(summary);
-
-    var panel = document.createElement('div'); panel.className = 'client-detail-panel';
-    var label = document.createElement('div'); label.className = 'client-detail-title'; label.textContent = '客户端 Top 10';
-    var list = document.createElement('ol');
+    summary.append(primary, count, el('span', 'client-more', '+' + (clients.length - 1)));
+    details.appendChild(summary);
+    var panel = el('div', 'client-detail-panel');
+    var list = el('ol');
     clients.forEach(function(item) {
-        var row = document.createElement('li');
-        var address = document.createElement('span'); address.textContent = item.client || '-'; address.title = item.client || '';
-        var requests = document.createElement('strong'); requests.textContent = fmt(item.count || 0);
-        row.append(address, requests); list.appendChild(row);
+        var row = el('li');
+        var address = el('span', '', clientLabel(item.client)); address.title = clientTitle(item.client);
+        row.append(address, el('strong', '', fmt(item.count)));
+        list.appendChild(row);
     });
-    panel.append(label, list); details.appendChild(panel); return details;
+    panel.append(el('div', 'client-detail-title', '客户端 Top 10'), list);
+    details.appendChild(panel); return details;
 }
 
-function updateDomainRanking(list, tbodyId, emptyText) {
+function failureReasonText(reason) {
+    if (reason === 'overload') return '并发查询达到上限，未发往上游';
+    if (reason === 'no_upstream') return '没有可用的上游';
+    return '上游均失败：' + reason;
+}
+
+function makeFailureReasons(domain) {
+    var reasons = domain.reasons || [];
+    var wrap = el('div', 'domain-reasons');
+    reasons.slice(0, 2).forEach(function(r) {
+        var line = el('div', '', failureReasonText(r.reason) + (reasons.length > 1 ? ' × ' + fmt(r.count) : ''));
+        line.title = failureReasonText(r.reason) + '：' + fmt(r.count) + ' 次';
+        wrap.appendChild(line);
+    });
+    if (reasons.length > 2) wrap.appendChild(el('div', 'dim', '另有 ' + (reasons.length - 2) + ' 种原因'));
+    return wrap;
+}
+
+function updateDomainRanking(list, tbodyId, emptyText, withReasons) {
     var tb = document.getElementById(tbodyId);
     var viewport = tb.closest('.domain-list-scroll');
     var previousScrollTop = viewport ? viewport.scrollTop : 0;
     var openDomains = {};
     Array.prototype.forEach.call(tb.querySelectorAll('tr[data-domain]'), function(row) {
-        var details = row.querySelector('details[open]');
-        if (details) openDomains[row.getAttribute('data-domain')] = true;
+        if (row.querySelector('details[open]')) openDomains[row.getAttribute('data-domain')] = true;
     });
     tb.replaceChildren();
     if (!list || !list.length) {
-        var emptyRow = document.createElement('tr');
-        var emptyCell = document.createElement('td');
-        emptyCell.colSpan = 4; emptyCell.className = 'empty'; emptyCell.textContent = emptyText;
-        emptyRow.appendChild(emptyCell); tb.appendChild(emptyRow);
+        emptyRow(tb, 4, emptyText);
         if (viewport) {
             viewport.classList.remove('expanded'); viewport.scrollTop = 0;
             var emptyButton = document.querySelector('[data-target="' + viewport.id + '"]');
@@ -291,16 +351,15 @@ function updateDomainRanking(list, tbodyId, emptyText) {
         return;
     }
     list.slice(0, 50).forEach(function(domain, i) {
-        var row = document.createElement('tr');
+        var row = el('tr', i < 3 ? 'rank-' + (i + 1) : '');
         var domainName = domain.key || '-';
         row.setAttribute('data-domain', domainName);
-        if (i < 3) row.className = 'rank-' + (i + 1);
-        var rank = document.createElement('td'); rank.className = 'rank-cell'; rank.textContent = i + 1;
-        var name = document.createElement('td'); name.className = 'domain-cell'; name.textContent = domainName; name.title = domainName;
-        var requests = document.createElement('td'); requests.className = 'number-cell'; requests.textContent = fmt(domain.count || 0);
-        var clients = document.createElement('td'); clients.className = 'client-breakdown-cell';
+        var name = el('td', 'domain-cell', domainName); name.title = domainName;
+        if (withReasons) { name.classList.add('with-reasons'); name.appendChild(makeFailureReasons(domain)); }
+        var clients = el('td', 'client-breakdown-cell');
         clients.appendChild(makeClientBreakdown(domain, !!openDomains[domainName]));
-        row.append(rank, name, requests, clients); tb.appendChild(row);
+        row.append(el('td', 'rank-cell', String(i + 1)), name, el('td', 'number-cell', fmt(domain.count)), clients);
+        tb.appendChild(row);
     });
     if (viewport) {
         viewport.scrollTop = previousScrollTop;
@@ -329,10 +388,97 @@ function initRankingExpanders() {
     });
 }
 
+var SOURCE_LABEL = { custom: '自定义记录', cache: '缓存' };
+
+// servedSource mirrors HandleDnsMsg precedence: custom records, then filter
+// rules, then a fresh cache entry, then the fastest valid upstream answer.
+function servedSource(result) {
+    var sources = result.sources || [];
+    var custom = sources.filter(function(s) { return s.kind === 'custom'; })[0];
+    if (custom) return custom;
+    if (result.blocked) return null;
+    var cache = sources.filter(function(s) { return s.kind === 'cache' && s.ttl_seconds > 0; })[0];
+    if (cache) return cache;
+    var valid = sources.filter(function(s) { return s.kind === 'upstream' && !s.error && (s.rcode === 'NOERROR' || s.rcode === 'NXDOMAIN'); });
+    valid.sort(function(a, b) { return a.latency_ms - b.latency_ms; });
+    return valid[0] || null;
+}
+
+function renderDiagnosis(result) {
+    var box = document.getElementById('diagnose-result');
+    box.replaceChildren(); box.hidden = false;
+    var summary = el('ul', 'diagnose-summary');
+    var route = el('li', '', result.route === 'dedicated'
+        ? '命中上游的 match / match_lists 规则，交给专用上游解析'
+        : '未命中专用规则，交给默认上游解析');
+    summary.appendChild(route);
+    var sources = result.sources || [];
+    if (sources.some(function(s) { return s.kind === 'custom'; })) summary.appendChild(el('li', 'note', '配置了自定义记录：直接返回，不查询上游，也不受拦截规则影响'));
+    else if (result.blocked) summary.appendChild(el('li', 'bad', '命中拦截规则：客户端会收到 NXDOMAIN（域名不存在）'));
+    var served = servedSource(result);
+    if (served) {
+        var answer = served.answers && served.answers.length ? served.answers.join('，') : (served.rcode || '空应答');
+        summary.appendChild(el('li', '', '客户端将收到（' + (SOURCE_LABEL[served.kind] || served.address) + '）：' + answer));
+        if (served.rebind_blocked) {
+            summary.appendChild(el('li', 'bad', '应答含内网/保留地址：经开启防重绑定的 dnsmasq 转发时会被丢弃，客户端只会得到空应答。需要访问时在 dnsmasq 中把该域名加入 rebind_domain 白名单'));
+        }
+    } else if (!result.blocked) {
+        summary.appendChild(el('li', 'bad', '所有上游都没有返回有效应答，客户端会收到 SERVFAIL（有过期缓存时返回旧应答）'));
+    }
+    box.appendChild(summary);
+
+    var wrap = el('div', 'tbl-wrap');
+    var table = el('table', 'diagnose-table');
+    var head = el('tr');
+    ['来源', '结果', '应答', '耗时 / TTL', 'dnsmasq'].forEach(function(h, i) { head.appendChild(el('th', i === 3 ? 'num-head' : i === 4 ? 'hide-sm' : '', h)); });
+    var thead = el('thead'); thead.appendChild(head);
+    var tbody = el('tbody');
+    sources.forEach(function(s) {
+        var row = el('tr');
+        var label = el('td', 'filter-source', SOURCE_LABEL[s.kind] || s.address || '-');
+        var failed = s.error || (s.rcode && s.rcode !== 'NOERROR' && s.rcode !== 'NXDOMAIN');
+        var outcome = el('td', failed ? 'error-high' : '', s.error ? (/deadline|timeout/i.test(s.error) ? '超时' : '错误') : (s.rcode || '-'));
+        if (s.error) outcome.title = s.error;
+        var answers = el('td');
+        if (s.error) answers.appendChild(el('span', 'dim', '-'));
+        else answers.appendChild(makeAddressList(s.answers, 'public', '无记录'));
+        var timing = el('td', 'number-cell');
+        if (s.kind === 'upstream') timing.textContent = ms(s.latency_ms);
+        else if (s.kind === 'cache') timing.textContent = s.ttl_seconds > 0 ? s.ttl_seconds + ' s' : '已过期';
+        else timing.textContent = '-';
+        var rebind = el('td', 'hide-sm ' + (s.rebind_blocked ? 'error-high' : 'dim'), s.rebind_blocked ? '会被丢弃' : '正常');
+        row.append(label, outcome, answers, timing, rebind);
+        tbody.appendChild(row);
+    });
+    if (!sources.length) emptyRow(tbody, 5, '没有可查询的上游');
+    table.append(thead, tbody); wrap.appendChild(table); box.appendChild(wrap);
+}
+
+async function diagnose(event) {
+    event.preventDefault();
+    if (diagnosing) return;
+    var name = document.getElementById('diagnose-name').value.trim();
+    if (!name) return;
+    var type = document.getElementById('diagnose-type').value;
+    var btn = document.getElementById('diagnose-btn');
+    var box = document.getElementById('diagnose-result');
+    try {
+        diagnosing = true; btn.disabled = true; btn.textContent = '诊断中…';
+        var r = await fetch('/api/diagnose?name=' + encodeURIComponent(name) + '&type=' + encodeURIComponent(type));
+        if (!r.ok) {
+            box.hidden = false; box.replaceChildren(el('p', 'error-high', r.status === 400 ? '域名或记录类型无效' : '诊断失败：' + (await r.text())));
+            return;
+        }
+        renderDiagnosis(await r.json());
+    } catch (e) {
+        box.hidden = false; box.replaceChildren(el('p', 'error-high', '诊断失败'));
+    } finally { diagnosing = false; btn.disabled = false; btn.textContent = '诊断'; }
+}
+
 function tick() {
     countdown--;
     if (countdown < 0) countdown = 0;
-    document.getElementById('last-update').textContent = countdown + 's';
+    setText('last-update', countdown + 's');
 }
 
 function resetCD() {
@@ -347,21 +493,24 @@ async function load() {
         var r = await fetch('/api/stats');
         if (!r.ok) throw 0;
         var d = await r.json();
+        clientNames = d.client_names || {};
         updateRuntime(d.runtime);
-        updateQueries(d.queries);
+        updateLifetime(d.queries);
+        updateRecent(d.recent);
         updateUpstream(d.upstreams);
         updateECSFixes(d.ecs_blackhole);
         updateTopClients(d.top_clients);
         updateDomainRanking(d.top_domains, 'top-domains-tbody', '暂无解析记录');
         updateDomainRanking(d.top_blocked_domains, 'top-blocked-domains-tbody', '暂无拦截记录');
+        updateDomainRanking(d.top_failed_domains, 'top-failed-domains-tbody', '暂无失败记录', true);
         updateDomainRanking(d.top_private_answer_domains, 'top-private-answer-domains-tbody', '暂无私有地址应答');
         var filters = await fetch('/api/filters');
         if (filters.ok) updateFilters(await filters.json());
         var lists = await fetch('/api/match-lists');
         if (lists.ok) updateMatchLists(await lists.json());
         resetCD();
-    } catch(e) {
-        document.getElementById('last-update').textContent = '失败';
+    } catch (e) {
+        setText('last-update', '失败');
     }
 }
 
@@ -376,8 +525,10 @@ async function loadVer() {
         var r = await fetch('/api/version');
         if (!r.ok) throw 0;
         var d = await r.json();
-        document.getElementById('version-display').textContent = 'v' + d.version;
-    } catch(e) {}
+        var link = document.getElementById('version-display');
+        link.textContent = 'v' + d.version;
+        if (d.version && d.version !== '0.0.0') link.href = REPO_URL + '/releases/tag/v' + encodeURIComponent(d.version);
+    } catch (e) {}
 }
 
 async function checkUpdate() {
@@ -385,19 +536,19 @@ async function checkUpdate() {
     var btn = document.getElementById('check-update-btn');
     try {
         checkingUpdate = true; btn.disabled = true; btn.textContent = '检查中…';
-        var r = await fetch('/api/check-update');
+        var r = await fetch('/api/check-update', { method: 'POST' });
         if (!r.ok) throw 0;
         var d = await r.json();
         alert(d.has_update
             ? d.message + '\n当前: v' + d.current_version + '\n最新: v' + d.latest_version
             : d.message + '\n当前: v' + d.current_version);
-    } catch(e) { alert('检查失败'); }
+    } catch (e) { alert('检查失败'); }
     finally { checkingUpdate = false; btn.disabled = false; btn.textContent = '检查更新'; }
 }
 
 async function resetStats() {
     if (resetting) return;
-    if (!confirm('重置所有统计数据？')) return;
+    if (!confirm('清空全部统计（累计、近 24 小时和所有排行）？')) return;
     var btn = document.getElementById('reset-stats-btn');
     try {
         resetting = true; btn.disabled = true; btn.textContent = '重置中…';
@@ -406,8 +557,8 @@ async function resetStats() {
         var d = await r.json();
         if (d.success) { alert(d.message || '已重置'); await load(); }
         else alert('失败: ' + (d.message || ''));
-    } catch(e) { alert('重置失败'); }
-    finally { resetting = false; btn.disabled = false; btn.textContent = '重置'; }
+    } catch (e) { alert('重置失败'); }
+    finally { resetting = false; btn.disabled = false; btn.textContent = '重置统计'; }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -417,6 +568,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('theme-toggle-btn').addEventListener('click', toggleTheme);
     document.getElementById('check-update-btn').addEventListener('click', checkUpdate);
     document.getElementById('reset-stats-btn').addEventListener('click', resetStats);
+    document.getElementById('diagnose-form').addEventListener('submit', diagnose);
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) stop(); else { load(); start(); }
     });

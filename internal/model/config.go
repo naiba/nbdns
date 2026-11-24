@@ -16,12 +16,21 @@ type DohServerConfig struct {
 	Password string `json:"password,omitempty"` // DoH Basic Auth 密码（可选）
 }
 
+// WebAuthConfig protects the dashboard with HTTP Basic authentication.
+type WebAuthConfig struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type Config struct {
 	MaxConcurrentQueries      int              `json:"max_concurrent_queries,omitempty"` // Pending cache misses, including coalesced waiters.
 	CustomRecords             []CustomRecord   `json:"custom_records,omitempty"`
 	ServeAddr                 string           `json:"serve_addr,omitempty"`
 	WebAddr                   string           `json:"web_addr,omitempty"`
 	DohServer                 *DohServerConfig `json:"doh_server,omitempty"`
+	WebAuth                   *WebAuthConfig   `json:"web_auth,omitempty"`
+	WebAllowedHosts           []string         `json:"web_allowed_hosts,omitempty"`  // Host names besides IPs, single-label and .lan-style names
+	ClientNameServer          string           `json:"client_name_server,omitempty"` // DNS server answering PTR for LAN clients
 	ECS                       string           `json:"ecs,omitempty"`
 	ECSBlackholeFallback      *bool            `json:"ecs_blackhole_fallback,omitempty"` // Default true: retry ECS blackhole answers without ECS
 	Timeout                   int              `json:"timeout,omitempty"`
@@ -81,6 +90,9 @@ func (c *Config) ReadInConfig(path string, log logger.Logger) error {
 	}
 	if len(c.Upstreams) == 0 {
 		return fmt.Errorf("at least one upstream is required")
+	}
+	if c.WebAuth != nil && (c.WebAuth.Username == "" || c.WebAuth.Password == "") {
+		return fmt.Errorf("web_auth requires both username and password")
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = 4

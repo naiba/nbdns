@@ -6,61 +6,91 @@
     <meta name="color-scheme" content="light dark">
     <title>NbDNS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=3.6.0">
+    <link rel="stylesheet" href="style.css?v=4.0.0">
 </head>
 <body>
     <nav>
         <div class="nav-inner">
-            <div class="brand">NbDNS</div>
+            <a class="brand" href="https://github.com/naiba/nbdns" target="_blank" rel="noopener" title="NbDNS 项目主页">NbDNS</a>
             <div class="nav-right">
-                <span class="refresh-hint" id="last-update">加载中</span>
+                <span class="refresh-hint" id="last-update" title="距下次刷新">加载中</span>
                 <span class="sep">·</span>
-                <span class="ver" id="version-display">v0.0.0</span>
-                <button id="check-update-btn" class="link-btn" title="检查更新">检查更新</button>
+                <a class="ver" id="version-display" href="https://github.com/naiba/nbdns/releases" target="_blank" rel="noopener" title="查看此版本的发布说明">v0.0.0</a>
+                <a class="nav-link" href="https://github.com/naiba/nbdns" target="_blank" rel="noopener">GitHub</a>
+                <button id="check-update-btn" class="link-btn" title="立即检查并安装新版本">检查更新</button>
                 <button id="theme-toggle-btn" class="theme-btn" title="切换主题">◐</button>
             </div>
         </div>
     </nav>
 
     <main>
-        <section class="row">
-            <div class="panel">
-                <h3>运行状态</h3>
-                <dl class="kv">
-                    <div><dt>Uptime</dt><dd id="uptime">-</dd></div>
-                    <div><dt>Goroutines</dt><dd id="goroutines">-</dd></div>
-                    <div><dt>Alloc</dt><dd id="mem-alloc">-</dd></div>
-                    <div><dt>Sys</dt><dd id="mem-sys">-</dd></div>
-                    <div><dt>Total Alloc</dt><dd id="mem-total">-</dd></div>
-                    <div><dt>GC Runs</dt><dd id="num-gc">-</dd></div>
-                </dl>
-            </div>
-            <div class="panel">
-                <div class="panel-head">
-                    <h3>查询统计</h3>
-                    <span class="dim" id="stats-duration">-</span>
-                    <button id="reset-stats-btn" class="link-btn danger" title="重置统计数据">重置</button>
+        <section class="panel wide overview-panel" aria-labelledby="overview-title">
+            <div class="panel-head ranking-head">
+                <div>
+                    <h3 id="overview-title">近 24 小时</h3>
+                    <p class="panel-subtitle">按小时滚动统计，重启后保留。下方趋势图每根柱子为一小时。</p>
                 </div>
-                <dl class="kv">
-                    <div class="em"><dt>Total</dt><dd id="total-queries">-</dd></div>
-                    <div><dt>DoH</dt><dd id="doh-queries">-</dd></div>
-                    <div class="good"><dt>Cache Hit</dt><dd id="cache-hits">-</dd></div>
-                    <div><dt>Cache Miss</dt><dd id="cache-misses">-</dd></div>
-                    <div class="bad"><dt>Failed</dt><dd id="failed-queries">-</dd></div>
-                    <div class="em"><dt>Hit Rate</dt><dd id="hit-rate">-</dd></div>
-                </dl>
+            </div>
+            <dl class="kv">
+                <div class="em"><dt>查询</dt><dd id="recent-queries">-</dd></div>
+                <div class="good"><dt>缓存命中率</dt><dd id="recent-hit-rate">-</dd></div>
+                <div><dt>拦截</dt><dd id="recent-blocked">-</dd></div>
+                <div class="bad"><dt>解析失败</dt><dd id="recent-failed">-</dd></div>
+                <div class="bad"><dt>失败率</dt><dd id="recent-failed-rate">-</dd></div>
+                <div><dt>缓存命中 / 回源</dt><dd id="recent-cache">-</dd></div>
+            </dl>
+            <div class="trend" aria-label="每小时查询趋势">
+                <svg id="trend-chart" class="trend-chart" viewBox="0 0 720 120" preserveAspectRatio="none" role="img" aria-label="近 24 小时每小时查询数"></svg>
+                <div class="trend-axis" id="trend-axis"></div>
+                <div class="trend-legend">
+                    <span><i class="legend-queries"></i>查询</span>
+                    <span><i class="legend-blocked"></i>拦截</span>
+                    <span><i class="legend-failed"></i>失败</span>
+                </div>
+            </div>
+            <div class="lifetime">
+                <span class="lifetime-title">累计</span>
+                <span class="dim" id="stats-duration" title="统计开始以来的时长">-</span>
+                <span>查询 <b id="total-queries">-</b></span>
+                <span>命中率 <b id="hit-rate">-</b></span>
+                <span>拦截 <b id="blocked-queries">-</b></span>
+                <span>失败 <b id="failed-queries">-</b></span>
+                <span>DoH <b id="doh-queries">-</b></span>
+                <button id="reset-stats-btn" class="link-btn danger" title="清空全部统计（包括近 24 小时与排行）">重置统计</button>
             </div>
         </section>
 
+        <section class="panel wide diagnose-panel" aria-labelledby="diagnose-title">
+            <div class="panel-head ranking-head">
+                <div>
+                    <h3 id="diagnose-title">解析诊断</h3>
+                    <p class="panel-subtitle">查看一个域名会走哪个上游、各上游返回什么、缓存状态，以及会不会被 dnsmasq 防重绑定丢弃。诊断直接询问上游，不计入统计、不写缓存。</p>
+                </div>
+            </div>
+            <form id="diagnose-form" class="diagnose-form" autocomplete="off">
+                <input id="diagnose-name" type="text" placeholder="例如 www.example.com" aria-label="要诊断的域名" required>
+                <select id="diagnose-type" aria-label="记录类型">
+                    <option>A</option><option>AAAA</option><option>CNAME</option><option>HTTPS</option><option>MX</option><option>TXT</option>
+                </select>
+                <button type="submit" id="diagnose-btn" class="primary-btn">诊断</button>
+            </form>
+            <div id="diagnose-result" class="diagnose-result" aria-live="polite" hidden></div>
+        </section>
+
         <section class="panel wide">
-            <h3>上游服务器</h3>
+            <div class="panel-head ranking-head">
+                <div>
+                    <h3>上游服务器</h3>
+                    <p class="panel-subtitle">仅显示当前配置的上游。错误率与延迟按近 24 小时计算，延迟只统计有效应答；累计数据见悬停提示。</p>
+                </div>
+            </div>
             <div class="tbl-wrap">
                 <table id="upstream-table">
                     <thead>
-                        <tr><th>地址</th><th>查询</th><th>错误</th><th>错误率</th><th class="hide-sm">最后使用</th></tr>
+                        <tr><th>地址</th><th class="num-head">查询</th><th class="num-head">错误率</th><th class="num-head">平均延迟</th><th class="num-head">P95</th><th class="hide-sm">最后使用</th></tr>
                     </thead>
                     <tbody id="upstream-tbody">
-                        <tr><td colspan="5" class="empty">暂无数据</td></tr>
+                        <tr><td colspan="6" class="empty">暂无数据</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -68,7 +98,7 @@
                 <h4>域名列表订阅 <span class="dim">命中的域名交给配置了 match_lists 的上游解析</span></h4>
                 <div class="tbl-wrap">
                     <table>
-                        <thead><tr><th>来源</th><th>域名</th><th>状态</th><th class="hide-sm">最近成功</th></tr></thead>
+                        <thead><tr><th>来源</th><th class="num-head">域名</th><th>状态</th><th class="hide-sm">最近成功</th></tr></thead>
                         <tbody id="match-lists-tbody"></tbody>
                     </table>
                 </div>
@@ -80,11 +110,11 @@
             <dl class="kv">
                 <div class="em"><dt>已载入规则</dt><dd id="filter-rules">-</dd></div>
                 <div><dt>未支持规则</dt><dd id="filter-unsupported">-</dd></div>
-                <div class="good"><dt>本次运行拦截</dt><dd id="filter-blocked">-</dd></div>
+                <div class="good"><dt>近 24 小时拦截</dt><dd id="filter-blocked">-</dd></div>
             </dl>
             <div class="tbl-wrap">
                 <table>
-                    <thead><tr><th>来源</th><th>规则</th><th>未支持</th><th>状态</th><th>最近成功</th></tr></thead>
+                    <thead><tr><th>来源</th><th class="num-head">规则</th><th class="num-head">未支持</th><th>状态</th><th class="hide-sm">最近成功</th></tr></thead>
                     <tbody id="filter-sources"><tr><td colspan="5" class="empty">暂无订阅</td></tr></tbody>
                 </table>
             </div>
@@ -113,7 +143,7 @@
                     </tbody>
                 </table>
             </div>
-            <p class="panel-footnote">次数为回源时修复的应答数，缓存命中不重复计算；修复过的域名 24 小时内直接不带 ECS 查询。可在配置中设置 <code>"ecs_blackhole_fallback": false</code> 关闭。</p>
+            <p class="panel-footnote">次数为回源时修复的应答数，缓存命中不重复计算；修复过的域名 24 小时内直接不带 ECS 查询。“无地址记录”表示去掉 ECS 后上游正常应答，但没有该类型的地址（如只有 CNAME 或域名不存在）。可在配置中设置 <code>"ecs_blackhole_fallback": false</code> 关闭。</p>
         </section>
 
         <section class="rankings-grid" aria-labelledby="rankings-title">
@@ -122,7 +152,7 @@
                 <div class="panel-head ranking-head">
                     <div>
                         <h3>客户端排行</h3>
-                        <p class="panel-subtitle">全部有效 DNS 请求</p>
+                        <p class="panel-subtitle">累计有效 DNS 请求 · 配置 client_name_server 后显示设备名，悬停查看地址</p>
                     </div>
                     <span class="ranking-badge">Top 10</span>
                 </div>
@@ -134,7 +164,7 @@
                 <div class="panel-head ranking-head">
                     <div>
                         <h3><span class="ranking-dot" aria-hidden="true"></span>已解析域名</h3>
-                        <p class="panel-subtitle">已放行并进入解析流程 · 滚动查看更多</p>
+                        <p class="panel-subtitle">累计 · 含缓存命中，靠前的多是频繁重复查询的设备</p>
                     </div>
                     <div class="ranking-head-actions">
                         <span class="ranking-badge">Top 50</span>
@@ -156,7 +186,7 @@
                 <div class="panel-head ranking-head">
                     <div>
                         <h3><span class="ranking-dot" aria-hidden="true"></span>已拦截域名</h3>
-                        <p class="panel-subtitle">命中过滤规则的 DNS 请求 · 滚动查看更多</p>
+                        <p class="panel-subtitle">累计 · 命中过滤规则的 DNS 请求</p>
                     </div>
                     <div class="ranking-head-actions">
                         <span class="ranking-badge">Top 50</span>
@@ -174,11 +204,33 @@
                     </table>
                 </div>
             </div>
+            <div class="panel domain-ranking-panel failed-ranking">
+                <div class="panel-head ranking-head">
+                    <div>
+                        <h3><span class="ranking-dot" aria-hidden="true"></span>解析失败域名</h3>
+                        <p class="panel-subtitle">累计 · 上游全部失败的查询（有过期缓存时客户端仍会收到旧应答）· 域名下方为失败原因</p>
+                    </div>
+                    <div class="ranking-head-actions">
+                        <span class="ranking-badge">Top 50</span>
+                        <button class="ranking-expand-btn" data-target="failed-domain-list" aria-controls="failed-domain-list" aria-expanded="false">展开全部</button>
+                    </div>
+                </div>
+                <div id="failed-domain-list" class="tbl-wrap domain-list-scroll" tabindex="0" aria-label="解析失败域名排行，可滚动">
+                    <table id="top-failed-domains-table">
+                        <thead>
+                            <tr><th class="w-rank">#</th><th>域名 / 原因</th><th>请求</th><th>主要客户端 / 请求</th></tr>
+                        </thead>
+                        <tbody id="top-failed-domains-tbody">
+                            <tr><td colspan="4" class="empty">暂无失败记录</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
             <div class="panel domain-ranking-panel private-answer-ranking">
                 <div class="panel-head ranking-head">
                     <div>
                         <h3><span class="ranking-dot" aria-hidden="true"></span>私有地址应答</h3>
-                        <p class="panel-subtitle">应答含内网/保留地址 · 经 dnsmasq 防重绑定转发时客户端会得到空应答，需要时加入 rebind_domain 白名单</p>
+                        <p class="panel-subtitle">累计 · 应答含内网/保留地址，经 dnsmasq 防重绑定转发时客户端会得到空应答，需要时加入 rebind_domain 白名单</p>
                     </div>
                     <div class="ranking-head-actions">
                         <span class="ranking-badge">Top 50</span>
@@ -199,8 +251,16 @@
         </section>
     </main>
 
-    <footer>NbDNS — 智能 DNS 中继</footer>
+    <footer>
+        <div class="runtime" aria-label="运行状态">
+            <span>已运行 <b id="uptime">-</b></span>
+            <span>内存 <b id="mem-alloc">-</b> · 系统 <b id="mem-sys">-</b></span>
+            <span>协程 <b id="goroutines">-</b></span>
+            <span>GC <b id="num-gc">-</b> 次</span>
+        </div>
+        <div><a href="https://github.com/naiba/nbdns" target="_blank" rel="noopener">NbDNS</a> — 智能 DNS 中继 · <a href="https://github.com/naiba/nbdns/issues" target="_blank" rel="noopener">反馈问题</a></div>
+    </footer>
 
-    <script src="app.js?v=3.6.0"></script>
+    <script src="app.js?v=4.0.0"></script>
 </body>
 </html>

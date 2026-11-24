@@ -68,6 +68,11 @@ func main() {
 	} else {
 		log.Printf("Stats loaded successfully from disk")
 	}
+	upstreamAddresses := make([]string, 0, len(config.Upstreams))
+	for _, up := range config.Upstreams {
+		upstreamAddresses = append(upstreamAddresses, up.Address)
+	}
+	statsRecorder.RetainUpstreams(upstreamAddresses)
 
 	// 更新 upstreams 的 logger 为正式的 logger
 	for i := 0; i < len(config.Bootstrap); i++ {
@@ -144,8 +149,10 @@ func main() {
 	// 创建更新检查通道
 	checkUpdateCh := make(chan struct{}, 1)
 
-	// 启动 Web 服务（监控面板 + DoH + pprof）
+	// 启动 Web 服务（监控面板 + DoH + pprof）。面板与 pprof 经 web.Protect 防护，
+	// DoH 由客户端直接访问且有自己的认证，不受面板 Host 白名单限制。
 	webServerHandler := http.NewServeMux()
+	dashboardHandler := http.NewServeMux()
 
 	// 注册监控面板路由
 	webHandler := web.NewHandler(statsRecorder, version, checkUpdateCh, debugLogger)
@@ -154,7 +161,11 @@ func main() {
 	}
 	webHandler.SetECSBlackholeStatus(config.ECSBlackholeFallbackStatus)
 	webHandler.SetMatchListStatus(upstreamLists.Snapshot)
-	webHandler.RegisterRoutes(webServerHandler)
+	webHandler.SetDiagnoser(upstreamHandler.Diagnose)
+	if config.ClientNameServer != "" {
+		webHandler.SetClientNameResolver(web.NewClientNameResolver(config.ClientNameServer))
+	}
+	webHandler.RegisterRoutes(dashboardHandler)
 	updateContext, cancelFilterUpdates := context.WithCancel(context.Background())
 	defer cancelFilterUpdates()
 	upstreamLists.Run(updateContext, time.Duration(config.FilterUpdateIntervalHours)*time.Hour)
@@ -179,9 +190,15 @@ func main() {
 
 	// 如果启用 profiling，注册 pprof 路由
 	if config.Profiling {
-		webServerHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
+		dashboardHandler.HandleFunc("/debug/", http.DefaultServeMux.ServeHTTP)
 		log.Printf("性能分析: http://%s/debug/pprof/", config.WebAddr)
 	}
+
+	access := web.AccessOptions{AllowedHosts: config.WebAllowedHosts}
+	if config.WebAuth != nil {
+		access.Username, access.Password = config.WebAuth.Username, config.WebAuth.Password
+	}
+	webServerHandler.Handle("/", web.Protect(dashboardHandler, access))
 
 	go func() {
 		// 面板端口冲突不影响 DNS 服务，但不能静默失败。

@@ -168,11 +168,15 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	exchange := func(ctx context.Context, up *model.Upstream, query *dns.Msg) upstreamReply {
 		// Per-upstream report: racing losers may also repair their answers.
 		report := &model.ECSBlackholeReport{}
-		msg, _, err := up.ExchangeContext(model.WithECSBlackholeReport(ctx, report), query)
+		msg, rtt, err := up.ExchangeContext(model.WithECSBlackholeReport(ctx, report), query)
 		valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
 			(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
 		if h.stats != nil {
-			h.stats.RecordUpstreamQuery(up.Address, !valid && !errors.Is(err, context.Canceled))
+			var latency time.Duration
+			if valid {
+				latency = max(rtt, time.Microsecond) // Zero means "no sample".
+			}
+			h.stats.RecordUpstreamQuery(up.Address, !valid && !errors.Is(err, context.Canceled), latency)
 		}
 		if !valid {
 			return upstreamReply{}
@@ -483,11 +487,11 @@ func (h *Handler) resolveDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg 
 	}
 
 	// 从上游获取响应
-	resp := h.resolveCacheMiss(req, cacheKey)
+	resp, overloaded := h.resolveCacheMiss(req, cacheKey)
 
 	if resp.Rcode == dns.RcodeServerFailure {
 		if h.stats != nil {
-			h.stats.RecordFailed()
+			h.stats.RecordFailedQuery(clientIP, domain, h.failureReason(req, overloaded))
 		}
 		// 上游失败时使用任何可用缓存（即使过期）作为降级
 		if respCache != nil {
@@ -503,6 +507,24 @@ func (h *Handler) resolveDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg 
 	h.logger.Printf("nbdns::resp: %+v\n", resp)
 	setResponseEDNS(req, resp)
 	return resp
+}
+
+// failureReason explains a SERVFAIL for the failed-domain ranking. exchange only
+// answers SERVFAIL after every matched upstream failed, so naming the matched
+// upstreams identifies the failing ones without tracking racing losers.
+func (h *Handler) failureReason(req *dns.Msg, overloaded bool) string {
+	if overloaded {
+		return stats.FailureReasonOverload
+	}
+	upstreams := h.matchedUpstreams(req)
+	if len(upstreams) == 0 {
+		return stats.FailureReasonNoUpstream
+	}
+	addresses := make([]string, len(upstreams))
+	for i, up := range upstreams {
+		addresses[i] = up.Address
+	}
+	return strings.Join(addresses, ", ")
 }
 
 func restoreReplyMeta(req, resp *dns.Msg) {

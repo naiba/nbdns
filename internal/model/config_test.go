@@ -64,3 +64,32 @@ func TestConfigQueryConcurrencyLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigDashboardAccessSettings(t *testing.T) {
+	for _, tc := range []struct{ name, body, wantError string }{
+		{"complete", `{"web_auth":{"username":"admin","password":"secret"},"web_allowed_hosts":["dns.example.com"],"client_name_server":"192.0.2.1","upstreams":[{"address":"udp://127.0.0.1:53"}]}`, ""},
+		{"missing password", `{"web_auth":{"username":"admin"},"upstreams":[{"address":"udp://127.0.0.1:53"}]}`, "web_auth"},
+		{"missing username", `{"web_auth":{"password":"secret"},"upstreams":[{"address":"udp://127.0.0.1:53"}]}`, "web_auth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var config Config
+			err := config.ReadInConfig(path, logger.New(false))
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("error=%v want %s", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.WebAuth.Username != "admin" || config.WebAuth.Password != "secret" || len(config.WebAllowedHosts) != 1 || config.ClientNameServer != "192.0.2.1" {
+				t.Errorf("parsed config: web_auth=%+v hosts=%v client_name_server=%q", config.WebAuth, config.WebAllowedHosts, config.ClientNameServer)
+			}
+		})
+	}
+}

@@ -36,8 +36,9 @@ type StatsRecorder interface {
 	RecordDoHQuery()
 	RecordCacheHit()
 	RecordCacheMiss()
-	RecordFailed()
-	RecordUpstreamQuery(address string, isError bool)
+	RecordFailedQuery(clientIP, domain, reason string)
+	RecordUpstreamQuery(address string, isError bool, latency time.Duration)
+	RetainUpstreams(addresses []string)
 	RecordClientQuery(clientIP, domain string)
 	RecordBlockedQuery(clientIP, domain string)
 	RecordPrivateAnswerQuery(clientIP, domain string)
@@ -59,6 +60,11 @@ type Stats struct {
 	CacheHits     atomic.Uint64
 	CacheMisses   atomic.Uint64
 	FailedQueries atomic.Uint64
+	// 过滤器拦截数。此前只有过滤器自己记的“本次运行拦截”，重启归零，与其他累计数据口径不一致。
+	BlockedQueries atomic.Uint64
+
+	recent queryWindow // 近 24 小时按小时计数
+	now    func() time.Time
 
 	// 上游服务器统计
 	upstreamStats map[string]*UpstreamStats
@@ -74,6 +80,9 @@ type Stats struct {
 	topBlockedDomains *TopNTracker // 被拦截域名 Top N
 	// 应答含私有地址的域名 Top N：经 dnsmasq 转发时会被其防重绑定丢弃。
 	topPrivateAnswerDomains *TopNTracker
+	// 解析失败（返回 SERVFAIL）的域名：同一域名分别记录客户端和失败原因。
+	topFailedDomains *TopNTracker
+	failedReasons    *TopNTracker
 
 	// ECS 黑洞自动修复统计（由 mu 保护）
 	ecsBlackholeFixed    uint64
@@ -88,6 +97,7 @@ type UpstreamStats struct {
 	Errors       atomic.Uint64
 	LastUsed     time.Time
 	mu           sync.RWMutex
+	recent       upstreamWindow
 }
 
 // NewStats 创建统计实例
@@ -103,12 +113,16 @@ func NewStats() *Stats {
 		topDomains:              NewTopNTracker(200), // 最多保留 200 个域名
 		topBlockedDomains:       NewTopNTracker(200), // 最多保留 200 个被拦截域名
 		topPrivateAnswerDomains: NewTopNTracker(200),
+		topFailedDomains:        NewTopNTracker(200),
+		failedReasons:           NewTopNTracker(200),
+		now:                     time.Now,
 	}
 }
 
 // RecordQuery 记录DNS查询
 func (s *Stats) RecordQuery() {
 	s.TotalQueries.Add(1)
+	s.recent.at(s.now()).queries.Add(1)
 }
 
 // RecordDoHQuery 记录DoH查询
@@ -119,20 +133,50 @@ func (s *Stats) RecordDoHQuery() {
 // RecordCacheHit 记录缓存命中
 func (s *Stats) RecordCacheHit() {
 	s.CacheHits.Add(1)
+	s.recent.at(s.now()).cacheHits.Add(1)
 }
 
 // RecordCacheMiss 记录缓存未命中
 func (s *Stats) RecordCacheMiss() {
 	s.CacheMisses.Add(1)
+	s.recent.at(s.now()).cacheMisses.Add(1)
 }
 
-// RecordFailed 记录查询失败
-func (s *Stats) RecordFailed() {
+// Failure reasons recorded with RecordFailedQuery. Any other reason is the
+// comma-separated list of upstreams that all failed for the query.
+const (
+	FailureReasonOverload   = "overload"    // max_concurrent_queries reached; nothing was sent upstream
+	FailureReasonNoUpstream = "no_upstream" // no upstream configured for the name
+)
+
+// RecordFailedQuery 记录一次上游失败（即使随后用过期缓存降级应答），并按域名排行。
+func (s *Stats) RecordFailedQuery(clientIP, domain, reason string) {
 	s.FailedQueries.Add(1)
+	s.recent.at(s.now()).failed.Add(1)
+	if domain != "" {
+		s.topFailedDomains.Record(domain, clientIP)
+		s.failedReasons.Record(domain, reason)
+	}
 }
 
-// RecordUpstreamQuery 记录上游服务器查询
-func (s *Stats) RecordUpstreamQuery(address string, isError bool) {
+// RetainUpstreams drops statistics of upstreams no longer configured: their
+// lifetime error rates otherwise stay on the dashboard forever.
+func (s *Stats) RetainUpstreams(addresses []string) {
+	keep := make(map[string]bool, len(addresses))
+	for _, address := range addresses {
+		keep[address] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for address := range s.upstreamStats {
+		if !keep[address] {
+			delete(s.upstreamStats, address)
+		}
+	}
+}
+
+// RecordUpstreamQuery 记录上游服务器查询；latency 为 0 表示没有有效应答，不计入延迟。
+func (s *Stats) RecordUpstreamQuery(address string, isError bool, latency time.Duration) {
 	// 先尝试读锁快速查找
 	s.mu.RLock()
 	us, ok := s.upstreamStats[address]
@@ -152,12 +196,14 @@ func (s *Stats) RecordUpstreamQuery(address string, isError bool) {
 		s.mu.Unlock()
 	}
 
+	now := s.now()
 	us.TotalQueries.Add(1)
 	if isError {
 		us.Errors.Add(1)
 	}
+	us.recent.record(now, isError, latency)
 	us.mu.Lock()
-	us.LastUsed = time.Now()
+	us.LastUsed = now
 	us.mu.Unlock()
 }
 
@@ -176,6 +222,8 @@ func (s *Stats) RecordBlockedQuery(clientIP, domain string) {
 	if clientIP != "" {
 		s.topClients.Record(clientIP, "")
 	}
+	s.BlockedQueries.Add(1)
+	s.recent.at(s.now()).blocked.Add(1)
 	if domain != "" {
 		s.topBlockedDomains.Record(domain, clientIP)
 	}
@@ -203,6 +251,8 @@ func (s *Stats) Reset() {
 	s.CacheHits.Store(0)
 	s.CacheMisses.Store(0)
 	s.FailedQueries.Store(0)
+	s.BlockedQueries.Store(0)
+	s.recent.reset()
 
 	// 重置上游服务器统计
 	s.upstreamStats = make(map[string]*UpstreamStats)
@@ -215,6 +265,8 @@ func (s *Stats) Reset() {
 	s.topDomains.Reset()
 	s.topBlockedDomains.Reset()
 	s.topPrivateAnswerDomains.Reset()
+	s.topFailedDomains.Reset()
+	s.failedReasons.Reset()
 }
 
 // RuntimeStats 运行时统计信息
@@ -237,6 +289,7 @@ type QueryStats struct {
 	CacheHits   uint64  `json:"cache_hits"`   // 缓存命中数
 	CacheMisses uint64  `json:"cache_misses"` // 缓存未命中数
 	Failed      uint64  `json:"failed"`       // 失败查询数
+	Blocked     uint64  `json:"blocked"`      // 过滤器拦截数
 	HitRate     float64 `json:"hit_rate"`     // 缓存命中率
 }
 
@@ -246,7 +299,14 @@ type UpstreamStatsJSON struct {
 	TotalQueries uint64  `json:"total_queries"` // 总查询数
 	Errors       uint64  `json:"errors"`        // 错误数
 	ErrorRate    float64 `json:"error_rate"`    // 错误率
-	LastUsed     string  `json:"last_used"`     // 最后使用时间
+	LastUsed     string  `json:"last_used"`     // 最后使用时间（RFC 3339，由浏览器按本地时区显示），从未使用为空
+
+	// 近 24 小时。延迟只统计有效应答；P95 为 LatencyOverflow 表示超过直方图上限。
+	RecentQueries   uint64  `json:"recent_queries"`
+	RecentErrors    uint64  `json:"recent_errors"`
+	RecentErrorRate float64 `json:"recent_error_rate"`
+	AvgLatencyMs    float64 `json:"avg_latency_ms"`
+	P95LatencyMs    float64 `json:"p95_latency_ms"`
 }
 
 // TopNItemJSON Top N 项目（JSON格式）
@@ -256,6 +316,13 @@ type TopNItemJSON struct {
 	TopClient      string            `json:"top_client,omitempty"`       // 查询最多的客户端 IP（仅域名统计有）
 	TopClientCount uint64            `json:"top_client_count,omitempty"` // 该客户端的查询次数
 	TopClients     []ClientCountJSON `json:"top_clients,omitempty"`      // 查询该域名最多的客户端 Top 10
+	Reasons        []ReasonCountJSON `json:"reasons,omitempty"`          // 仅失败域名：失败原因分布
+}
+
+// ReasonCountJSON 失败原因及次数，原因见 RecordFailedQuery。
+type ReasonCountJSON struct {
+	Reason string `json:"reason"`
+	Count  uint64 `json:"count"`
 }
 
 // ClientCountJSON 域名下的客户端请求数。
@@ -273,6 +340,8 @@ type StatsSnapshot struct {
 	TopDomains              []TopNItemJSON      `json:"top_domains"`                // Top 已解析域名
 	TopBlockedDomains       []TopNItemJSON      `json:"top_blocked_domains"`        // Top 被拦截域名
 	TopPrivateAnswerDomains []TopNItemJSON      `json:"top_private_answer_domains"` // Top 应答含私有地址的域名
+	TopFailedDomains        []TopNItemJSON      `json:"top_failed_domains"`         // Top 解析失败的域名
+	Recent                  RecentStats         `json:"recent"`                     // 近 24 小时
 	ECSBlackhole            ECSBlackholeStats   `json:"ecs_blackhole"`              // ECS 黑洞自动修复
 }
 
@@ -320,10 +389,12 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 		CacheHits:   hits,
 		CacheMisses: misses,
 		Failed:      failed,
+		Blocked:     s.BlockedQueries.Load(),
 		HitRate:     hitRate,
 	}
 
 	// 上游服务器统计
+	now := s.now()
 	s.mu.RLock()
 	upstreams := make([]UpstreamStatsJSON, 0, len(s.upstreamStats))
 	for _, us := range s.upstreamStats {
@@ -334,20 +405,32 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 			errorRate = float64(errors) / float64(queries) * 100
 		}
 
+		// 过去以服务器本地时间格式化且不带时区：路由器上 Go 常用 UTC，面板比实际时间慢数小时。
 		us.mu.RLock()
-		lastUsed := us.LastUsed.Format("2006-01-02 15:04:05")
-		if us.LastUsed.IsZero() {
-			lastUsed = "Never"
+		var lastUsed string
+		if !us.LastUsed.IsZero() {
+			lastUsed = us.LastUsed.UTC().Format(time.RFC3339)
 		}
 		us.mu.RUnlock()
 
-		upstreams = append(upstreams, UpstreamStatsJSON{
-			Address:      us.Address,
-			TotalQueries: queries,
-			Errors:       errors,
-			ErrorRate:    errorRate,
-			LastUsed:     lastUsed,
-		})
+		recent := us.recent.sum(now)
+		entry := UpstreamStatsJSON{
+			Address:       us.Address,
+			TotalQueries:  queries,
+			Errors:        errors,
+			ErrorRate:     errorRate,
+			LastUsed:      lastUsed,
+			RecentQueries: recent.queries,
+			RecentErrors:  recent.errors,
+			P95LatencyMs:  recent.percentileMs(0.95),
+		}
+		if recent.queries > 0 {
+			entry.RecentErrorRate = float64(recent.errors) / float64(recent.queries) * 100
+		}
+		if recent.samples > 0 {
+			entry.AvgLatencyMs = float64(recent.sumMicros) / float64(recent.samples) / 1000
+		}
+		upstreams = append(upstreams, entry)
 	}
 	s.mu.RUnlock()
 
@@ -369,6 +452,8 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 	topDomains := topDomainItems(s.topDomains, topDomainLimit)
 	topBlockedDomains := topDomainItems(s.topBlockedDomains, topDomainLimit)
 	topPrivateAnswerDomains := topDomainItems(s.topPrivateAnswerDomains, topDomainLimit)
+	topFailedDomains := topDomainItems(s.topFailedDomains, topDomainLimit)
+	attachFailureReasons(s.failedReasons, topFailedDomains)
 
 	return StatsSnapshot{
 		Runtime:                 runtimeStats,
@@ -378,7 +463,30 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 		TopDomains:              topDomains,
 		TopBlockedDomains:       topBlockedDomains,
 		TopPrivateAnswerDomains: topPrivateAnswerDomains,
+		TopFailedDomains:        topFailedDomains,
+		Recent:                  s.recent.snapshot(now),
 		ECSBlackhole:            s.ecsBlackholeSnapshot(),
+	}
+}
+
+func attachFailureReasons(reasons *TopNTracker, domains []TopNItemJSON) {
+	reasons.mu.RLock()
+	defer reasons.mu.RUnlock()
+	for i := range domains {
+		item := reasons.items[domains[i].Key]
+		if item == nil {
+			continue
+		}
+		for reason, count := range item.clients {
+			domains[i].Reasons = append(domains[i].Reasons, ReasonCountJSON{Reason: reason, Count: count})
+		}
+		sort.Slice(domains[i].Reasons, func(a, b int) bool {
+			left, right := domains[i].Reasons[a], domains[i].Reasons[b]
+			if left.Count == right.Count {
+				return left.Reason < right.Reason
+			}
+			return left.Count > right.Count
+		})
 	}
 }
 
@@ -512,20 +620,25 @@ type PersistentStats struct {
 	CacheHits               uint64                         `json:"cache_hits"`
 	CacheMisses             uint64                         `json:"cache_misses"`
 	FailedQueries           uint64                         `json:"failed_queries"`
+	BlockedQueries          uint64                         `json:"blocked_queries,omitempty"`
+	Recent                  []PersistentQueryHour          `json:"recent,omitempty"`
 	Upstreams               map[string]*PersistentUpstream `json:"upstreams"`
 	TopClients              []PersistentTopNItem           `json:"top_clients"`
 	TopDomains              []PersistentTopNItem           `json:"top_domains"`
 	TopBlockedDomains       []PersistentTopNItem           `json:"top_blocked_domains,omitempty"`
 	TopPrivateAnswerDomains []PersistentTopNItem           `json:"top_private_answer_domains,omitempty"`
+	TopFailedDomains        []PersistentTopNItem           `json:"top_failed_domains,omitempty"`
+	FailedReasons           []PersistentTopNItem           `json:"failed_reasons,omitempty"`
 	ECSBlackhole            *PersistentECSBlackhole        `json:"ecs_blackhole,omitempty"`
 }
 
 // PersistentUpstream 持久化上游服务器统计
 type PersistentUpstream struct {
-	Address      string    `json:"address"`
-	TotalQueries uint64    `json:"total_queries"`
-	Errors       uint64    `json:"errors"`
-	LastUsed     time.Time `json:"last_used"`
+	Address      string                   `json:"address"`
+	TotalQueries uint64                   `json:"total_queries"`
+	Errors       uint64                   `json:"errors"`
+	LastUsed     time.Time                `json:"last_used"`
+	Recent       []PersistentUpstreamHour `json:"recent,omitempty"`
 }
 
 // PersistentTopNItem 持久化 Top N 项目
@@ -710,6 +823,7 @@ func (s *Stats) Save(dataPath string) error {
 }
 
 func (s *Stats) marshalPersistent() ([]byte, error) {
+	now := s.now()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -721,6 +835,8 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 		CacheHits:               s.CacheHits.Load(),
 		CacheMisses:             s.CacheMisses.Load(),
 		FailedQueries:           s.FailedQueries.Load(),
+		BlockedQueries:          s.BlockedQueries.Load(),
+		Recent:                  s.recent.persistent(now),
 		Upstreams:               make(map[string]*PersistentUpstream),
 		TopClients:              make([]PersistentTopNItem, 0),
 		TopDomains:              make([]PersistentTopNItem, 0),
@@ -737,6 +853,7 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 			TotalQueries: us.TotalQueries.Load(),
 			Errors:       us.Errors.Load(),
 			LastUsed:     us.LastUsed,
+			Recent:       us.recent.persistent(now),
 		}
 		us.mu.RUnlock()
 	}
@@ -746,6 +863,8 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 	persistent.TopDomains = persistentTopNItems(s.topDomains)
 	persistent.TopBlockedDomains = persistentTopNItems(s.topBlockedDomains)
 	persistent.TopPrivateAnswerDomains = persistentTopNItems(s.topPrivateAnswerDomains)
+	persistent.TopFailedDomains = persistentTopNItems(s.topFailedDomains)
+	persistent.FailedReasons = persistentTopNItems(s.failedReasons)
 
 	// 紧凑 JSON：每隔几分钟整份重写，缩进约占文件的三分之一，徒增存储卡写入。
 	return json.Marshal(persistent)
@@ -805,6 +924,8 @@ func (s *Stats) Load(dataPath string) error {
 	s.CacheHits.Store(persistent.CacheHits)
 	s.CacheMisses.Store(persistent.CacheMisses)
 	s.FailedQueries.Store(persistent.FailedQueries)
+	s.BlockedQueries.Store(persistent.BlockedQueries)
+	s.recent.restore(persistent.Recent, s.now())
 	s.restoreECSBlackholeLocked(persistent.ECSBlackhole)
 
 	// 恢复上游服务器统计
@@ -815,6 +936,7 @@ func (s *Stats) Load(dataPath string) error {
 		}
 		us.TotalQueries.Store(pus.TotalQueries)
 		us.Errors.Store(pus.Errors)
+		us.recent.restore(pus.Recent, s.now())
 		s.upstreamStats[addr] = us
 	}
 
@@ -847,6 +969,8 @@ func (s *Stats) Load(dataPath string) error {
 	// 旧版统计文件没有这些字段时保持为空。
 	restoreDomainItems(s.topBlockedDomains, persistent.TopBlockedDomains)
 	restoreDomainItems(s.topPrivateAnswerDomains, persistent.TopPrivateAnswerDomains)
+	restoreDomainItems(s.topFailedDomains, persistent.TopFailedDomains)
+	restoreDomainItems(s.failedReasons, persistent.FailedReasons)
 
 	return nil
 }
