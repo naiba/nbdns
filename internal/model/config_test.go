@@ -1,10 +1,12 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/naiba/nbdns/pkg/logger"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -91,5 +93,30 @@ func TestConfigDashboardAccessSettings(t *testing.T) {
 				t.Errorf("parsed config: web_auth=%+v hosts=%v client_name_server=%q", config.WebAuth, config.WebAllowedHosts, config.ClientNameServer)
 			}
 		})
+	}
+}
+
+// data/config.schema.json forbids unknown properties, so a field missing there
+// is flagged as an error in editors even though nbdns accepts it.
+func TestConfigSchemaListsEveryConfigField(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "data", "config.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(body, &schema); err != nil {
+		t.Fatal(err)
+	}
+	fields := reflect.TypeOf(Config{})
+	for i := 0; i < fields.NumField(); i++ {
+		name, _, _ := strings.Cut(fields.Field(i).Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, ok := schema.Properties[name]; !ok {
+			t.Errorf("config field %q is missing from data/config.schema.json", name)
+		}
 	}
 }

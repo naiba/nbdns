@@ -74,6 +74,43 @@
       },
       "description": "省略或 null 关闭入站 DoH；对象启用 /dns-query；仅 username 和 password 都非空时启用 Basic Auth。不是上游 DNS 凭据。"
     },
+    "web_auth": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "username",
+        "password"
+      ],
+      "properties": {
+        "username": {
+          "type": "string",
+          "minLength": 1
+        },
+        "password": {
+          "type": "string",
+          "minLength": 1,
+          "writeOnly": true
+        }
+      },
+      "description": "省略或 null 时面板不需要密码；对象启用 HTTP Basic 认证，保护面板、/api/* 和 pprof，不影响 DoH（DoH 使用 doh_server）。用户名和密码都必须非空。"
+    },
+    "web_allowed_hosts": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "除 IP、localhost、单标签主机名及 .lan/.local/.localdomain/.home/.home.arpa/.internal/.localhost 外，允许用来访问面板的主机名（如反向代理域名）。其他主机名会被拒绝，以防 DNS 重绑定。"
+    },
+    "client_name_server": {
+      "type": "string",
+      "default": "",
+      "description": "为局域网客户端提供 PTR 反查的 DNS 服务器 host 或 host:port（默认端口 53），通常是 DHCP 服务器；面板据此显示设备名。留空不反查。"
+    },
     "filter_lists": {
       "type": "array",
       "default": [],

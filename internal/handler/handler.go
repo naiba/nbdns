@@ -168,13 +168,17 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 	exchange := func(ctx context.Context, up *model.Upstream, query *dns.Msg) upstreamReply {
 		// Per-upstream report: racing losers may also repair their answers.
 		report := &model.ECSBlackholeReport{}
-		msg, rtt, err := up.ExchangeContext(model.WithECSBlackholeReport(ctx, report), query)
+		// Measure here: ExchangeContext reports no duration for pooled TCP/DoT
+		// exchanges, which made DoT upstreams look instantaneous on the dashboard.
+		started := time.Now()
+		msg, _, err := up.ExchangeContext(model.WithECSBlackholeReport(ctx, report), query)
+		elapsed := time.Since(started)
 		valid := err == nil && validUpstreamReply(query, msg) && !msg.Truncated &&
 			(msg.Rcode == dns.RcodeSuccess || msg.Rcode == dns.RcodeNameError)
 		if h.stats != nil {
 			var latency time.Duration
 			if valid {
-				latency = max(rtt, time.Microsecond) // Zero means "no sample".
+				latency = max(elapsed, time.Microsecond) // Zero means "no sample".
 			}
 			h.stats.RecordUpstreamQuery(up.Address, !valid && !errors.Is(err, context.Canceled), latency)
 		}

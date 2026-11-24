@@ -3,6 +3,7 @@ package handler
 import (
 	"net"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/naiba/nbdns/internal/model"
@@ -48,5 +49,33 @@ func TestFailedDomainRankingNamesFailingUpstreamsAndLatencyIsRecorded(t *testing
 	got := snapshot.Upstreams[0]
 	if got.RecentQueries != 4 || got.RecentErrors != 3 || got.AvgLatencyMs <= 0 || got.P95LatencyMs <= 0 || got.LastUsed == "" {
 		t.Errorf("upstream recent stats = %+v", got)
+	}
+}
+
+// Upstream.ExchangeContext reports no duration for pooled TCP/DoT exchanges,
+// so latency must be measured around the exchange rather than taken from it.
+func TestUpstreamLatencyIsMeasuredForTCPUpstreams(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &dns.Server{Listener: listener, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		time.Sleep(30 * time.Millisecond)
+		_ = w.WriteMsg(addressAnswer("1.1.1.1")(req))
+	})}
+	go func() { _ = server.ActivateAndServe() }()
+	t.Cleanup(func() { _ = server.Shutdown() })
+	upstream := &model.Upstream{Address: "tcp://" + listener.Addr().String()}
+	upstream.Init(&model.Config{Timeout: 2}, logger.New(false))
+	upstream.InitConnectionPool(nil)
+	recorder := stats.NewStats()
+	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), recorder)
+
+	if resp := h.HandleDnsMsg(testQuery("slow.example."), "192.0.2.10", ""); resp.Rcode != dns.RcodeSuccess {
+		t.Fatalf("tcp answer = %+v", resp)
+	}
+	got := recorder.GetSnapshot().Upstreams
+	if len(got) != 1 || got[0].AvgLatencyMs < 25 || got[0].P95LatencyMs < 25 {
+		t.Errorf("tcp upstream latency = %+v, want about 30 ms", got)
 	}
 }
