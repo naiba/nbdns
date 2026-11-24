@@ -77,8 +77,8 @@ nav {
     text-decoration: none;
 }
 
-.nav-right a, footer a { color: var(--fg2); text-decoration: none; border-bottom: 1px dotted var(--fg3); }
-.nav-right a:hover, footer a:hover { color: var(--fg); border-color: var(--fg); }
+footer a { color: var(--fg2); text-decoration: none; border-bottom: 1px dotted var(--fg3); }
+footer a:hover { color: var(--fg); border-color: var(--fg); }
 
 .nav-right {
     display: flex;
@@ -91,11 +91,6 @@ nav {
 .sep { user-select: none; }
 
 .refresh-hint { font-variant-numeric: tabular-nums; }
-
-.ver {
-    font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-}
 
 .link-btn {
     background: none;
@@ -578,6 +573,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 .ecs-fix-panel { border-top: 3px solid var(--em); }
 .ecs-fix-panel .panel-subtitle { max-width: 760px; }
+.ecs-fix-panel .domain-list-scroll { max-height: min(50vh, 420px); }
+.ecs-fix-panel .domain-list-scroll.expanded { max-height: none; }
 
 .status-pill {
     flex: 0 0 auto;

@@ -246,8 +246,16 @@ function updateECSFixes(e) {
     last.title = domains.length ? localTime(domains[0].last_seen) : '';
 
     var tb = document.getElementById('ecs-fix-tbody');
+    var viewport = document.getElementById('ecs-fix-list');
+    var expandButton = document.querySelector('[data-target="ecs-fix-list"]');
+    var previousScrollTop = viewport.scrollTop;
     tb.replaceChildren();
-    if (!domains.length) { emptyRow(tb, 5, info.empty, info.emptyClass); return; }
+    if (!domains.length) {
+        emptyRow(tb, 5, info.empty, info.emptyClass);
+        viewport.classList.remove('expanded');
+        syncRankingExpandButton(expandButton, viewport);
+        return;
+    }
     domains.forEach(function(d) {
         var row = el('tr');
         var shown = (d.domain || '-').replace(/\.$/, '');
@@ -265,6 +273,9 @@ function updateECSFixes(e) {
         row.append(name, blackhole, fixed, el('td', 'number-cell', fmt(d.count)), seen);
         tb.appendChild(row);
     });
+    // Up to 50 domains: scroll inside the panel instead of stretching the page.
+    viewport.scrollTop = previousScrollTop;
+    syncRankingExpandButton(expandButton, viewport);
 }
 
 function updateTopClients(list) {
