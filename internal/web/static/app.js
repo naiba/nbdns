@@ -354,6 +354,7 @@ async function load() {
         updateTopClients(d.top_clients);
         updateDomainRanking(d.top_domains, 'top-domains-tbody', '暂无解析记录');
         updateDomainRanking(d.top_blocked_domains, 'top-blocked-domains-tbody', '暂无拦截记录');
+        updateDomainRanking(d.top_private_answer_domains, 'top-private-answer-domains-tbody', '暂无私有地址应答');
         var filters = await fetch('/api/filters');
         if (filters.ok) updateFilters(await filters.json());
         var lists = await fetch('/api/match-lists');

@@ -49,6 +49,28 @@ func TestStatsEndpointIncludesBlockedDomainRanking(t *testing.T) {
 	}
 }
 
+func TestStatsEndpointIncludesPrivateAnswerRanking(t *testing.T) {
+	recorder := stats.NewStats()
+	recorder.RecordPrivateAnswerQuery("192.0.2.10", "internal.example.")
+	h := NewHandler(recorder, "", make(chan struct{}, 1), logger.New(false))
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/stats", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var got struct {
+		TopPrivateAnswerDomains []stats.TopNItemJSON `json:"top_private_answer_domains"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.TopPrivateAnswerDomains) != 1 || got.TopPrivateAnswerDomains[0].Key != "internal.example." || got.TopPrivateAnswerDomains[0].TopClient != "192.0.2.10" {
+		t.Errorf("private answer ranking response = %+v", got.TopPrivateAnswerDomains)
+	}
+}
+
 func TestStatsEndpointIncludesECSBlackholeFixes(t *testing.T) {
 	recorder := stats.NewStats()
 	recorder.RecordECSBlackholeFallback(stats.ECSBlackholeEvent{Domain: "geo-blocked.example.", Upstream: "tcp-tls://dns.example:853",

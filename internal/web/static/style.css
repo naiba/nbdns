@@ -210,6 +210,7 @@ main {
 .domain-ranking-panel { border-top-width: 3px; }
 .resolved-ranking { border-top-color: var(--good); }
 .blocked-ranking { border-top-color: var(--bad); }
+.private-answer-ranking { grid-column: 1 / -1; border-top-color: var(--em); }
 
 .ranking-dot {
     display: inline-block;
@@ -222,6 +223,7 @@ main {
 }
 
 .blocked-ranking .ranking-dot { background: var(--bad); }
+.private-answer-ranking .ranking-dot { background: var(--em); }
 
 h3 {
     font-size: 13px;
@@ -577,7 +579,7 @@ footer {
 
 @media (max-width: 880px) {
     .rankings-grid { grid-template-columns: 1fr; gap: 16px; }
-    .client-ranking-panel { grid-column: auto; }
+    .client-ranking-panel, .private-answer-ranking { grid-column: auto; }
 }
 
 @media (max-width: 640px) {

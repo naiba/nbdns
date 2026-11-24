@@ -143,6 +143,7 @@ Visit `http://localhost:8854` to view:
 - DNS subscription status (rule counts, refresh errors and blocked queries)
 - Upstream server status (queries, error rate, last used)
 - Top 10 clients, Top 50 resolved/blocked domains, and per-domain client request breakdowns
+- Top 50 domains answered with private or reserved addresses (those dnsmasq `private_net` rejects: 10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, 169.254/16, documentation ranges, `::1`, `fe80::/10`, `fd00::/8`, ...). Behind dnsmasq with rebind protection, clients get an empty answer for these names and dnsmasq logs nothing by default; add the ones you need to `rebind_domain`. Cache hits are counted too
 - Statistics reset
 
 ### :lock: DoH (DNS over HTTPS)

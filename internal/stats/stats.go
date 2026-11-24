@@ -40,6 +40,7 @@ type StatsRecorder interface {
 	RecordUpstreamQuery(address string, isError bool)
 	RecordClientQuery(clientIP, domain string)
 	RecordBlockedQuery(clientIP, domain string)
+	RecordPrivateAnswerQuery(clientIP, domain string)
 	RecordECSBlackholeFallback(event ECSBlackholeEvent)
 	GetSnapshot() StatsSnapshot
 	Reset()
@@ -71,6 +72,8 @@ type Stats struct {
 	topClients        *TopNTracker // 客户端 IP Top N
 	topDomains        *TopNTracker // 已解析域名 Top N
 	topBlockedDomains *TopNTracker // 被拦截域名 Top N
+	// 应答含私有地址的域名 Top N：经 dnsmasq 转发时会被其防重绑定丢弃。
+	topPrivateAnswerDomains *TopNTracker
 
 	// ECS 黑洞自动修复统计（由 mu 保护）
 	ecsBlackholeFixed    uint64
@@ -91,14 +94,15 @@ type UpstreamStats struct {
 func NewStats() *Stats {
 	now := time.Now()
 	return &Stats{
-		StartTime:           now,
-		StatsStartTime:      now,
-		upstreamStats:       make(map[string]*UpstreamStats),
-		saveSlot:            make(chan struct{}, 1),
-		ecsBlackholeDomains: make(map[string]*ecsBlackholeDomain),
-		topClients:          NewTopNTracker(100), // 最多保留 100 个客户端 IP
-		topDomains:          NewTopNTracker(200), // 最多保留 200 个域名
-		topBlockedDomains:   NewTopNTracker(200), // 最多保留 200 个被拦截域名
+		StartTime:               now,
+		StatsStartTime:          now,
+		upstreamStats:           make(map[string]*UpstreamStats),
+		saveSlot:                make(chan struct{}, 1),
+		ecsBlackholeDomains:     make(map[string]*ecsBlackholeDomain),
+		topClients:              NewTopNTracker(100), // 最多保留 100 个客户端 IP
+		topDomains:              NewTopNTracker(200), // 最多保留 200 个域名
+		topBlockedDomains:       NewTopNTracker(200), // 最多保留 200 个被拦截域名
+		topPrivateAnswerDomains: NewTopNTracker(200),
 	}
 }
 
@@ -177,6 +181,14 @@ func (s *Stats) RecordBlockedQuery(clientIP, domain string) {
 	}
 }
 
+// RecordPrivateAnswerQuery 记录一次应答含私有地址（dnsmasq 防重绑定会丢弃）的查询。
+// 该查询已由 RecordClientQuery 计入客户端与已解析域名，这里只单独排行域名。
+func (s *Stats) RecordPrivateAnswerQuery(clientIP, domain string) {
+	if domain != "" {
+		s.topPrivateAnswerDomains.Record(domain, clientIP)
+	}
+}
+
 // Reset 重置统计数据
 func (s *Stats) Reset() {
 	s.mu.Lock()
@@ -202,6 +214,7 @@ func (s *Stats) Reset() {
 	s.topClients.Reset()
 	s.topDomains.Reset()
 	s.topBlockedDomains.Reset()
+	s.topPrivateAnswerDomains.Reset()
 }
 
 // RuntimeStats 运行时统计信息
@@ -253,13 +266,14 @@ type ClientCountJSON struct {
 
 // StatsSnapshot 完整统计快照
 type StatsSnapshot struct {
-	Runtime           RuntimeStats        `json:"runtime"`             // 运行时信息
-	Queries           QueryStats          `json:"queries"`             // 查询统计
-	Upstreams         []UpstreamStatsJSON `json:"upstreams"`           // 上游服务器统计
-	TopClients        []TopNItemJSON      `json:"top_clients"`         // Top 客户端 IP
-	TopDomains        []TopNItemJSON      `json:"top_domains"`         // Top 已解析域名
-	TopBlockedDomains []TopNItemJSON      `json:"top_blocked_domains"` // Top 被拦截域名
-	ECSBlackhole      ECSBlackholeStats   `json:"ecs_blackhole"`       // ECS 黑洞自动修复
+	Runtime                 RuntimeStats        `json:"runtime"`                    // 运行时信息
+	Queries                 QueryStats          `json:"queries"`                    // 查询统计
+	Upstreams               []UpstreamStatsJSON `json:"upstreams"`                  // 上游服务器统计
+	TopClients              []TopNItemJSON      `json:"top_clients"`                // Top 客户端 IP
+	TopDomains              []TopNItemJSON      `json:"top_domains"`                // Top 已解析域名
+	TopBlockedDomains       []TopNItemJSON      `json:"top_blocked_domains"`        // Top 被拦截域名
+	TopPrivateAnswerDomains []TopNItemJSON      `json:"top_private_answer_domains"` // Top 应答含私有地址的域名
+	ECSBlackhole            ECSBlackholeStats   `json:"ecs_blackhole"`              // ECS 黑洞自动修复
 }
 
 // GetSnapshot 获取统计快照
@@ -354,15 +368,17 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 	// Top N 已解析及被拦截域名，每个域名附带客户端 Top 10。
 	topDomains := topDomainItems(s.topDomains, topDomainLimit)
 	topBlockedDomains := topDomainItems(s.topBlockedDomains, topDomainLimit)
+	topPrivateAnswerDomains := topDomainItems(s.topPrivateAnswerDomains, topDomainLimit)
 
 	return StatsSnapshot{
-		Runtime:           runtimeStats,
-		Queries:           queryStats,
-		Upstreams:         upstreams,
-		TopClients:        topClients,
-		TopDomains:        topDomains,
-		TopBlockedDomains: topBlockedDomains,
-		ECSBlackhole:      s.ecsBlackholeSnapshot(),
+		Runtime:                 runtimeStats,
+		Queries:                 queryStats,
+		Upstreams:               upstreams,
+		TopClients:              topClients,
+		TopDomains:              topDomains,
+		TopBlockedDomains:       topBlockedDomains,
+		TopPrivateAnswerDomains: topPrivateAnswerDomains,
+		ECSBlackhole:            s.ecsBlackholeSnapshot(),
 	}
 }
 
@@ -490,17 +506,18 @@ type TopNItem struct {
 
 // PersistentStats 持久化统计数据结构
 type PersistentStats struct {
-	StatsStartTime    time.Time                      `json:"stats_start_time"` // 统计开始时间（可持久化）
-	TotalQueries      uint64                         `json:"total_queries"`
-	DoHQueries        uint64                         `json:"doh_queries"`
-	CacheHits         uint64                         `json:"cache_hits"`
-	CacheMisses       uint64                         `json:"cache_misses"`
-	FailedQueries     uint64                         `json:"failed_queries"`
-	Upstreams         map[string]*PersistentUpstream `json:"upstreams"`
-	TopClients        []PersistentTopNItem           `json:"top_clients"`
-	TopDomains        []PersistentTopNItem           `json:"top_domains"`
-	TopBlockedDomains []PersistentTopNItem           `json:"top_blocked_domains,omitempty"`
-	ECSBlackhole      *PersistentECSBlackhole        `json:"ecs_blackhole,omitempty"`
+	StatsStartTime          time.Time                      `json:"stats_start_time"` // 统计开始时间（可持久化）
+	TotalQueries            uint64                         `json:"total_queries"`
+	DoHQueries              uint64                         `json:"doh_queries"`
+	CacheHits               uint64                         `json:"cache_hits"`
+	CacheMisses             uint64                         `json:"cache_misses"`
+	FailedQueries           uint64                         `json:"failed_queries"`
+	Upstreams               map[string]*PersistentUpstream `json:"upstreams"`
+	TopClients              []PersistentTopNItem           `json:"top_clients"`
+	TopDomains              []PersistentTopNItem           `json:"top_domains"`
+	TopBlockedDomains       []PersistentTopNItem           `json:"top_blocked_domains,omitempty"`
+	TopPrivateAnswerDomains []PersistentTopNItem           `json:"top_private_answer_domains,omitempty"`
+	ECSBlackhole            *PersistentECSBlackhole        `json:"ecs_blackhole,omitempty"`
 }
 
 // PersistentUpstream 持久化上游服务器统计
@@ -698,17 +715,18 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 
 	// 准备持久化数据
 	persistent := PersistentStats{
-		StatsStartTime:    s.StatsStartTime,
-		TotalQueries:      s.TotalQueries.Load(),
-		DoHQueries:        s.DoHQueries.Load(),
-		CacheHits:         s.CacheHits.Load(),
-		CacheMisses:       s.CacheMisses.Load(),
-		FailedQueries:     s.FailedQueries.Load(),
-		Upstreams:         make(map[string]*PersistentUpstream),
-		TopClients:        make([]PersistentTopNItem, 0),
-		TopDomains:        make([]PersistentTopNItem, 0),
-		TopBlockedDomains: make([]PersistentTopNItem, 0),
-		ECSBlackhole:      s.persistentECSBlackholeLocked(),
+		StatsStartTime:          s.StatsStartTime,
+		TotalQueries:            s.TotalQueries.Load(),
+		DoHQueries:              s.DoHQueries.Load(),
+		CacheHits:               s.CacheHits.Load(),
+		CacheMisses:             s.CacheMisses.Load(),
+		FailedQueries:           s.FailedQueries.Load(),
+		Upstreams:               make(map[string]*PersistentUpstream),
+		TopClients:              make([]PersistentTopNItem, 0),
+		TopDomains:              make([]PersistentTopNItem, 0),
+		TopBlockedDomains:       make([]PersistentTopNItem, 0),
+		TopPrivateAnswerDomains: make([]PersistentTopNItem, 0),
+		ECSBlackhole:            s.persistentECSBlackholeLocked(),
 	}
 
 	// 保存上游服务器统计
@@ -727,6 +745,7 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 	persistent.TopClients = persistentTopNItems(s.topClients)
 	persistent.TopDomains = persistentTopNItems(s.topDomains)
 	persistent.TopBlockedDomains = persistentTopNItems(s.topBlockedDomains)
+	persistent.TopPrivateAnswerDomains = persistentTopNItems(s.topPrivateAnswerDomains)
 
 	// 紧凑 JSON：每隔几分钟整份重写，缩进约占文件的三分之一，徒增存储卡写入。
 	return json.Marshal(persistent)
@@ -825,21 +844,25 @@ func (s *Stats) Load(dataPath string) error {
 	}
 	s.topDomains.mu.Unlock()
 
-	// 恢复 Top 被拦截域名（旧版统计文件没有该字段时保持为空）。
-	s.topBlockedDomains.mu.Lock()
-	for _, pitem := range persistent.TopBlockedDomains {
+	// 旧版统计文件没有这些字段时保持为空。
+	restoreDomainItems(s.topBlockedDomains, persistent.TopBlockedDomains)
+	restoreDomainItems(s.topPrivateAnswerDomains, persistent.TopPrivateAnswerDomains)
+
+	return nil
+}
+
+func restoreDomainItems(tracker *TopNTracker, items []PersistentTopNItem) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	for _, pitem := range items {
 		clients, topClient := restoredClients(pitem)
-		item := &TopNItem{
+		tracker.items[pitem.Key] = &TopNItem{
 			Key:       pitem.Key,
 			Count:     pitem.Count,
 			TopClient: topClient,
 			clients:   clients,
 		}
-		s.topBlockedDomains.items[pitem.Key] = item
 	}
-	s.topBlockedDomains.mu.Unlock()
-
-	return nil
 }
 
 func restoredClients(item PersistentTopNItem) (map[string]uint64, string) {

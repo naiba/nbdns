@@ -145,3 +145,43 @@ func BenchmarkStatsPopulateBounded(b *testing.B) {
 		runtime.KeepAlive(s)
 	}
 }
+
+func TestPrivateAnswerRankingPersistsAndResets(t *testing.T) {
+	s := NewStats()
+	for range 3 {
+		s.RecordPrivateAnswerQuery("192.0.2.1", "internal.example.")
+	}
+	s.RecordPrivateAnswerQuery("192.0.2.2", "internal.example.")
+	s.RecordPrivateAnswerQuery("192.0.2.2", "lan.example.")
+
+	snapshot := s.GetSnapshot()
+	if len(snapshot.TopPrivateAnswerDomains) != 2 {
+		t.Fatalf("private answer domains = %+v", snapshot.TopPrivateAnswerDomains)
+	}
+	first := snapshot.TopPrivateAnswerDomains[0]
+	if first.Key != "internal.example." || first.Count != 4 || first.TopClient != "192.0.2.1" || first.TopClientCount != 3 || len(first.TopClients) != 2 {
+		t.Errorf("private answer ranking = %+v", first)
+	}
+	// A private answer is still a resolved query: it must not distort the other rankings.
+	if len(snapshot.TopDomains) != 0 || len(snapshot.TopBlockedDomains) != 0 || len(snapshot.TopClients) != 0 {
+		t.Errorf("private answers leaked into other rankings: %+v", snapshot)
+	}
+
+	dataPath := t.TempDir()
+	if err := s.Save(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded := NewStats()
+	if err := loaded.Load(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	restored := loaded.GetSnapshot().TopPrivateAnswerDomains
+	if len(restored) != 2 || restored[0].Key != "internal.example." || restored[0].Count != 4 || restored[0].TopClient != "192.0.2.1" || restored[0].TopClientCount != 3 {
+		t.Errorf("restored private answer ranking = %+v", restored)
+	}
+
+	loaded.Reset()
+	if got := loaded.GetSnapshot().TopPrivateAnswerDomains; len(got) != 0 {
+		t.Errorf("private answer ranking after reset = %+v", got)
+	}
+}

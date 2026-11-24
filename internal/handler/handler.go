@@ -400,6 +400,20 @@ func validateResponse(req *dns.Msg, resp *dns.Msg, debugLogger logger.Logger) bo
 // HandleDnsMsg 处理 DNS 查询的核心逻辑（支持缓存和统计）
 // clientIP 和 domain 用于统计，如果为空则自动从请求中提取 domain
 func (h *Handler) HandleDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
+	resp := h.resolveDnsMsg(req, clientIP, domain)
+	// dnsmasq 防重绑定会把含私有地址的应答变成空应答，客户端只看到解析失败，
+	// dnsmasq 默认也不记日志。在出口统一检查（含缓存命中与自定义记录），
+	// 每次返回都计数，才能找出需要加入 rebind_domain 白名单的域名。
+	if h.stats != nil && req != nil && len(req.Question) == 1 && model.AnswerHasDnsmasqRebindAddress(resp) {
+		if domain == "" {
+			domain = req.Question[0].Name
+		}
+		h.stats.RecordPrivateAnswerQuery(clientIP, domain)
+	}
+	return resp
+}
+
+func (h *Handler) resolveDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg {
 	if req == nil {
 		return new(dns.Msg).SetRcodeFormatError(new(dns.Msg))
 	}

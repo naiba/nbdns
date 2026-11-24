@@ -174,6 +174,28 @@
                     </table>
                 </div>
             </div>
+            <div class="panel domain-ranking-panel private-answer-ranking">
+                <div class="panel-head ranking-head">
+                    <div>
+                        <h3><span class="ranking-dot" aria-hidden="true"></span>私有地址应答</h3>
+                        <p class="panel-subtitle">应答含内网/保留地址 · 经 dnsmasq 防重绑定转发时客户端会得到空应答，需要时加入 rebind_domain 白名单</p>
+                    </div>
+                    <div class="ranking-head-actions">
+                        <span class="ranking-badge">Top 50</span>
+                        <button class="ranking-expand-btn" data-target="private-answer-domain-list" aria-controls="private-answer-domain-list" aria-expanded="false">展开全部</button>
+                    </div>
+                </div>
+                <div id="private-answer-domain-list" class="tbl-wrap domain-list-scroll" tabindex="0" aria-label="私有地址应答域名排行，可滚动">
+                    <table id="top-private-answer-domains-table">
+                        <thead>
+                            <tr><th class="w-rank">#</th><th>域名</th><th>请求</th><th>主要客户端 / 请求</th></tr>
+                        </thead>
+                        <tbody id="top-private-answer-domains-tbody">
+                            <tr><td colspan="4" class="empty">暂无私有地址应答</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </section>
     </main>
 
