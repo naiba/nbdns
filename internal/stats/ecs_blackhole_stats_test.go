@@ -147,3 +147,26 @@ func TestECSFixReasonIsRecordedAndPersisted(t *testing.T) {
 		t.Errorf("reasons = %v", reasons)
 	}
 }
+
+func TestECSFixQueryTypesAreRecordedAndPersisted(t *testing.T) {
+	s := NewStats()
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "edge.example.", Reason: "refused", QueryType: "HTTPS"})
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "edge.example.", Reason: "refused", QueryType: "HTTPS"})
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "edge.example.", Reason: "refused", QueryType: "A", PublicAddresses: []string{"203.0.113.20"}})
+	s.RecordECSBlackholeFallback(ECSBlackholeEvent{Domain: "legacy.example.", Reason: "refused"}) // Callers without a type.
+	dataPath := t.TempDir()
+	if err := s.Save(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded := NewStats()
+	if err := loaded.Load(dataPath); err != nil {
+		t.Fatal(err)
+	}
+	types := map[string][]string{}
+	for _, d := range loaded.GetSnapshot().ECSBlackhole.Domains {
+		types[d.Domain] = d.QueryTypes
+	}
+	if !reflect.DeepEqual(types["edge.example."], []string{"A", "HTTPS"}) || len(types["legacy.example."]) != 0 {
+		t.Errorf("query types = %v", types)
+	}
+}

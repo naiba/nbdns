@@ -132,4 +132,9 @@ func TestECSRefusedNameResolvesInsteadOfServfail(t *testing.T) {
 	if got.Fixed != 1 || len(got.Domains) != 1 || got.Domains[0].Reason != "refused" || len(got.Domains[0].BlackholeAddresses) != 0 {
 		t.Errorf("stats = %+v", got)
 	}
+	// An HTTPS repair of the same name records its type next to the A repair.
+	h.HandleDnsMsg(new(dns.Msg).SetQuestion("refused.example.", dns.TypeHTTPS), "192.0.2.10", "")
+	if got := recorder.GetSnapshot().ECSBlackhole.Domains; len(got) != 1 || len(got[0].QueryTypes) != 2 || got[0].QueryTypes[0] != "A" || got[0].QueryTypes[1] != "HTTPS" {
+		t.Errorf("query types = %+v", got)
+	}
 }

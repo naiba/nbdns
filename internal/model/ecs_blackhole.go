@@ -101,6 +101,16 @@ type ECSBlackholeFallback struct {
 	PublicAddresses    []string // From the answer actually served
 	Remembered         bool     // Served from memory without a new ECS probe
 	Reason             string   // ECSFallbackReasonBlackhole or ECSFallbackReasonRefused
+	// QueryType of the repaired query, e.g. "HTTPS": such repairs often carry no
+	// address, which the dashboard showed as an unexplained empty answer.
+	QueryType string
+}
+
+func queryTypeName(req *dns.Msg) string {
+	if req == nil || len(req.Question) == 0 {
+		return ""
+	}
+	return dns.Type(req.Question[0].Qtype).String()
 }
 
 const (

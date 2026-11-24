@@ -216,12 +216,12 @@ var ECS_FIX_STATUS = {
     no_ecs: { label: '未配置 ECS', empty: '未向上游发送 ECS，不会出现 ECS 黑洞，无需修复', emptyClass: 'empty' }
 };
 
-function makeAddressList(addresses, kind, emptyText) {
+function makeAddressList(addresses, kind, emptyText, emptyTitle) {
     var wrap = el('div', 'addr-list');
     var list = addresses || [];
     if (!list.length) {
         var none = el('span', 'dim', emptyText || '-');
-        if (emptyText) none.title = '去掉 ECS 后上游正常应答，但没有该类型的地址记录';
+        if (emptyTitle) none.title = emptyTitle;
         wrap.appendChild(none); return wrap;
     }
     list.slice(0, 3).forEach(function(address) { wrap.appendChild(el('span', 'addr ' + kind, address)); });
@@ -268,7 +268,16 @@ function updateECSFixes(e) {
         var blackhole = el('td', 'hide-sm');
         // Refused names have no blackhole addresses: show the rejection itself.
         blackhole.appendChild(d.reason === 'refused' ? makeAddressList(['REFUSED'], 'blackhole') : makeAddressList(d.blackhole_addresses, 'blackhole'));
-        var fixed = el('td'); fixed.appendChild(makeAddressList(d.public_addresses, 'public', '无地址记录'));
+        // HTTPS/AAAA repairs often succeed with no records (NODATA): name the query
+        // types so an empty cell is not mistaken for a failed repair.
+        var types = d.query_types || [];
+        var fixed = el('td');
+        fixed.appendChild(makeAddressList(d.public_addresses, 'public',
+            '无地址记录' + (types.length ? '（' + types.join('、') + ' 查询）' : ''),
+            types.length
+                ? '去掉 ECS 后上游正常应答，但这些查询类型没有地址记录（例如 HTTPS 记录不存在），客户端收到的是正常的空应答而不是 SERVFAIL'
+                : '去掉 ECS 后上游正常应答但没有地址记录，通常是 HTTPS 或 AAAA 查询；旧版本未记录查询类型'));
+        if (types.length) fixed.title = '已修复的查询类型：' + types.join('、');
         var seen = el('td', 'hide-sm dim', relativeTime(d.last_seen)); seen.title = localTime(d.last_seen);
         row.append(name, blackhole, fixed, el('td', 'number-cell', fmt(d.count)), seen);
         tb.appendChild(row);

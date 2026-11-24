@@ -192,7 +192,7 @@ func (h *Handler) exchange(req *dns.Msg) *dns.Msg {
 		if reply.fallback != nil && h.stats != nil {
 			f := reply.fallback
 			h.stats.RecordECSBlackholeFallback(stats.ECSBlackholeEvent{Domain: f.Domain, Upstream: f.Upstream, Reason: f.Reason,
-				BlackholeAddresses: f.BlackholeAddresses, PublicAddresses: f.PublicAddresses, Remembered: f.Remembered})
+				BlackholeAddresses: f.BlackholeAddresses, PublicAddresses: f.PublicAddresses, Remembered: f.Remembered, QueryType: f.QueryType})
 		}
 		return reply.msg
 	}

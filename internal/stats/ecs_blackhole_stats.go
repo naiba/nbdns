@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,18 +21,22 @@ type ECSBlackholeEvent struct {
 	PublicAddresses    []string
 	Remembered         bool
 	Reason             string // "blackhole" or "refused"; empty keeps the known reason
+	QueryType          string // e.g. "A" or "HTTPS"; empty when unknown
 }
 
 // ECSBlackholeDomainJSON aggregates fixes for one domain.
 type ECSBlackholeDomainJSON struct {
-	Domain             string    `json:"domain"`
-	Upstream           string    `json:"upstream"`
-	BlackholeAddresses []string  `json:"blackhole_addresses"`
-	PublicAddresses    []string  `json:"public_addresses"`
-	Reason             string    `json:"reason,omitempty"` // "blackhole" or "refused"
-	Count              uint64    `json:"count"`
-	FirstSeen          time.Time `json:"first_seen"`
-	LastSeen           time.Time `json:"last_seen"`
+	Domain             string   `json:"domain"`
+	Upstream           string   `json:"upstream"`
+	BlackholeAddresses []string `json:"blackhole_addresses"`
+	PublicAddresses    []string `json:"public_addresses"`
+	Reason             string   `json:"reason,omitempty"` // "blackhole" or "refused"
+	// QueryTypes lists the repaired query types, sorted. A name repaired only for
+	// HTTPS or AAAA queries without records legitimately has no public addresses.
+	QueryTypes []string  `json:"query_types,omitempty"`
+	Count      uint64    `json:"count"`
+	FirstSeen  time.Time `json:"first_seen"`
+	LastSeen   time.Time `json:"last_seen"`
 }
 
 // ECSBlackholeStats is the dashboard view. Status is filled by the web layer
@@ -74,6 +79,10 @@ func (s *Stats) RecordECSBlackholeFallback(event ECSBlackholeEvent) {
 	}
 	if event.Reason != "" {
 		entry.Reason = event.Reason
+	}
+	if event.QueryType != "" && !slices.Contains(entry.QueryTypes, event.QueryType) {
+		entry.QueryTypes = append(entry.QueryTypes, event.QueryType)
+		slices.Sort(entry.QueryTypes)
 	}
 	entry.BlackholeAddresses = mergeAddressFamilies(entry.BlackholeAddresses, event.BlackholeAddresses)
 	entry.PublicAddresses = mergeAddressFamilies(entry.PublicAddresses, event.PublicAddresses)
@@ -140,6 +149,7 @@ func (s *Stats) ecsBlackholeDomainsLocked(limit int) []ECSBlackholeDomainJSON {
 		item := entry.ECSBlackholeDomainJSON
 		item.BlackholeAddresses = append([]string{}, entry.BlackholeAddresses...)
 		item.PublicAddresses = append([]string{}, entry.PublicAddresses...)
+		item.QueryTypes = slices.Clone(entry.QueryTypes)
 		result = append(result, item)
 	}
 	return result

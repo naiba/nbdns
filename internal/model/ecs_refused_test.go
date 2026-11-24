@@ -153,3 +153,19 @@ func TestECSBlackholeReportCarriesReason(t *testing.T) {
 		t.Errorf("blackhole report = %+v", report.Fallback)
 	}
 }
+
+// Repairs of HTTPS or AAAA queries often carry no address; the dashboard needs
+// the query type to tell such a repair from a missing answer.
+func TestECSFallbackReportCarriesQueryType(t *testing.T) {
+	authority := &ecsRefusingAuthority{}
+	up := startRefusingUpstream(t, authority, `{"ecs":"180.152.0.0/24","timeout":2}`)
+	for _, qtype := range []uint16{dns.TypeHTTPS, dns.TypeHTTPS} { // Second one is served from memory.
+		report := &ECSBlackholeReport{}
+		if _, _, err := up.ExchangeContext(WithECSBlackholeReport(t.Context(), report), new(dns.Msg).SetQuestion("refused.example.", qtype)); err != nil {
+			t.Fatal(err)
+		}
+		if report.Fallback == nil || report.Fallback.QueryType != "HTTPS" {
+			t.Errorf("fallback report = %+v, want query type HTTPS", report.Fallback)
+		}
+	}
+}

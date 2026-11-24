@@ -260,7 +260,7 @@ func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg
 			resp, duration, err := up.exchangeTransport(ctx, up.controlledECSRequest(req, false))
 			if err == nil && acceptsECSFallback(reason, resp) {
 				reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address, Reason: reason,
-					BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(resp, false), Remembered: true})
+					BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(resp, false), Remembered: true, QueryType: queryTypeName(req)})
 			}
 			return resp, duration, err
 		}
@@ -283,7 +283,7 @@ func (up *Upstream) ExchangeContext(ctx context.Context, req *dns.Msg) (*dns.Msg
 		up.config.ecsBlackholes.remember(name, reason, blackholes)
 		up.logger.Printf("ECS %s %v for %s via %s; using answer without ECS", reason, blackholes, name, up.Address)
 		reportECSBlackholeFallback(ctx, &ECSBlackholeFallback{Domain: name, Upstream: up.Address, Reason: reason,
-			BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(plain, false)})
+			BlackholeAddresses: blackholes, PublicAddresses: answerAddressStrings(plain, false), QueryType: queryTypeName(req)})
 		return plain, duration, nil
 	}
 	if ctx.Err() != nil {
