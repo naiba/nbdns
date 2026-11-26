@@ -22,11 +22,14 @@ func TestFailedDomainRankingNamesFailingUpstreamsAndLatencyIsRecorded(t *testing
 	})
 	recorder := stats.NewStats()
 	h := NewHandler(false, []*model.Upstream{upstream}, "", logger.New(false), recorder)
+	clock := newSteppingClock()
+	h.clock = clock.Now
 
 	for _, client := range []string{"192.0.2.10", "192.0.2.10", "192.0.2.20"} {
 		if resp := h.HandleDnsMsg(testQuery("broken.example."), client, ""); resp.Rcode != dns.RcodeServerFailure {
 			t.Fatalf("broken answer = %+v", resp)
 		}
+		clock.Advance(failureCacheMaximum + time.Second) // Retry upstream after each failure window.
 	}
 	if resp := h.HandleDnsMsg(testQuery("working.example."), "192.0.2.10", ""); resp.Rcode != dns.RcodeSuccess {
 		t.Fatalf("working answer = %+v", resp)

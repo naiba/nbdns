@@ -164,6 +164,9 @@ func (s *Stats) RecordPrefetch() {
 const (
 	FailureReasonOverload   = "overload"    // max_concurrent_queries reached; nothing was sent upstream
 	FailureReasonNoUpstream = "no_upstream" // no upstream configured for the name
+	// FailureReasonCachedFailure: the query failed upstream moments ago and is
+	// answered from the RFC 9520 failure cache without asking upstreams again.
+	FailureReasonCachedFailure = "cached_failure"
 )
 
 // RecordFailedQuery 记录一次上游失败（即使随后用过期缓存降级应答），并按域名排行。

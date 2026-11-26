@@ -338,6 +338,7 @@ function makeClientBreakdown(domain, wasOpen) {
 function failureReasonText(reason) {
     if (reason === 'overload') return '并发查询达到上限，未发往上游';
     if (reason === 'no_upstream') return '没有可用的上游';
+    if (reason === 'cached_failure') return '近期上游刚失败，退避期内未重试（RFC 9520）';
     return '上游均失败：' + reason;
 }
 

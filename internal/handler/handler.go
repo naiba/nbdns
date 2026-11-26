@@ -42,6 +42,11 @@ type Handler struct {
 	background   sync.WaitGroup
 	closing      bool
 	prefetching  map[string]bool
+
+	// RFC 9520 failure cache (see failure_cache.go).
+	failuresMu sync.Mutex
+	failures   map[string]cachedFailure
+	clock      func() time.Time // Test hook; nil means time.Now
 }
 
 // SetCacheMaxTTL caps how long answers stay fresh in the cache (cache_max_ttl).
@@ -104,6 +109,7 @@ func NewHandler(builtInCache bool,
 		stats:            statsRecorder,
 		maxCacheTTL:      model.DefaultCacheMaxTTL * time.Second,
 		prefetching:      make(map[string]bool),
+		failures:         make(map[string]cachedFailure),
 	}
 }
 
@@ -513,12 +519,33 @@ func (h *Handler) resolveDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg 
 		}
 	}
 
-	// 从上游获取响应
-	resp, overloaded := h.resolveCacheMiss(req, cacheKey)
+	// 从上游获取响应；近期失败过的查询在退避窗口内直接失败，不再打扰上游（RFC 9520）。
+	failureKey := cacheKey
+	if failureKey == "" {
+		failureKey = namespacedDNSCacheKey(h.cacheNamespace, req)
+	}
+	var resp *dns.Msg
+	overloaded, failureCached := false, h.failureCached(failureKey)
+	if failureCached {
+		resp = new(dns.Msg).SetRcode(req, dns.RcodeServerFailure)
+	} else {
+		resp, overloaded = h.resolveCacheMiss(req, cacheKey)
+	}
 
+	if resp.Rcode != dns.RcodeServerFailure && !failureCached {
+		h.forgetFailure(failureKey)
+	}
 	if resp.Rcode == dns.RcodeServerFailure {
+		reason := stats.FailureReasonCachedFailure
+		if !failureCached {
+			reason = h.failureReason(req, overloaded)
+			// Overload and missing upstreams are local conditions, not upstream failures.
+			if !overloaded && reason != stats.FailureReasonNoUpstream {
+				h.rememberFailure(failureKey)
+			}
+		}
 		if h.stats != nil {
-			h.stats.RecordFailedQuery(clientIP, domain, h.failureReason(req, overloaded))
+			h.stats.RecordFailedQuery(clientIP, domain, reason)
 		}
 		// 上游失败时使用任何可用缓存（即使过期）作为降级
 		if respCache != nil {

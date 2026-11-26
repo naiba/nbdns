@@ -141,11 +141,14 @@ func TestConcurrentDNSFailureIsSharedAndCanRetry(t *testing.T) {
 	recorder := stats.NewStats()
 	h := NewHandler(true, []*model.Upstream{up}, t.TempDir(), logger.New(false), recorder)
 	t.Cleanup(func() { _ = h.Close() })
+	clock := newSteppingClock()
+	h.clock = clock.Now
 	concurrentDNSQueries(t, h, dns.RcodeServerFailure, true)
 	if calls.Load() != 1 || recorder.FailedQueries.Load() != 32 {
 		t.Fatalf("failure not shared/accounted per client: calls=%d failures=%d", calls.Load(), recorder.FailedQueries.Load())
 	}
 	recovered.Store(true)
+	clock.Advance(failureCacheInitial + time.Millisecond) // Leave the RFC 9520 failure window.
 	concurrentDNSQueries(t, h, dns.RcodeSuccess, true)
 	if calls.Load() != 2 || recorder.TotalQueries.Load() != 64 || recorder.FailedQueries.Load() != 32 {
 		t.Fatalf("failed flight was retained: calls=%d stats=%+v", calls.Load(), recorder.GetSnapshot())
