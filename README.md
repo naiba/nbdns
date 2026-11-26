@@ -74,6 +74,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 | `max_active_connections` | Maximum active connections per TCP/DoT pool or DoH upstream | `50` |
 | `max_idle_connections` | Maximum idle connections per TCP/DoT pool or DoH upstream | `20` |
 | `built_in_cache` | Enable persistent Badger cache and in-memory hot cache              | `false`        |
+| `cache_max_ttl` | Maximum time in seconds an answer stays fresh in the cache; shorter DNS TTLs are always honored | `86400` |
 | `socks_proxy`    | SOCKS5 proxy address                                                | Optional       |
 | `bootstrap` | IP-addressed DNS servers for upstream hostnames without local A overrides | As needed |
 | `upstreams`      | Upstream DNS list                                                   | Required       |
@@ -93,7 +94,7 @@ Complete configuration JSON Schema: [data/config.schema.json](data/config.schema
 - `a.com` matches only a.com
 - `.a.com` matches a.a.com, c.a.com, e.d.a.com, etc.
 
-Bootstrap and ordinary queries share one in-memory hot cache and one persistent Badger cache, both controlled by `built_in_cache`; disabling it disables caching for both. Unexpired disk entries remain reusable after restart. Cache keys distinguish upstream and ECS policies; matching policies can reuse each other’s answers. Entries follow DNS TTLs, capped at one hour. Zero-TTL answers and failures are not written to cache; negative answers with an SOA follow their negative TTL. Concurrent duplicate lookups are still coalesced.
+Bootstrap and ordinary queries share one in-memory hot cache and one persistent Badger cache, both controlled by `built_in_cache`; disabling it disables caching for both. Unexpired disk entries remain reusable after restart. Cache keys distinguish upstream and ECS policies; matching policies can reuse each other’s answers. Entries follow DNS TTLs, capped by `cache_max_ttl` (one day by default, like Unbound); records with shorter TTLs, such as DDNS names, expire on time. Expired entries are never served while upstreams answer; they are kept one more hour only as a fallback when every upstream fails. A cache hit in the last tenth of an entry's lifetime (lifetimes of at least 10 seconds) refreshes it in the background (prefetch), so frequently queried names rarely miss; prefetching yields to client queries when `max_concurrent_queries` is reached. The cache hit rate counts only queries that consult the cache: blocked queries and custom records are excluded, and an expired entry counts as a miss. Zero-TTL answers and failures are not written to cache; negative answers with an SOA follow their negative TTL. Concurrent duplicate lookups are still coalesced.
 
 Bootstrap and ordinary DNS queries share `custom_records`, checked before caches and upstream requests. For example, to pin Google DNS:
 

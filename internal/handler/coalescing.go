@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/naiba/nbdns/internal/cache"
 )
 
 // SetMaxConcurrentQueries configures admission before the handler starts serving.
@@ -56,21 +55,8 @@ func (h *Handler) resolveCacheMiss(req *dns.Msg, cacheKey string) (resp *dns.Msg
 			}
 		}
 		resp := h.exchange(req)
-		if len(resp.Answer) == 0 && (resp.Rcode == dns.RcodeNameError || resp.Rcode == dns.RcodeSuccess) {
-			for _, rr := range resp.Ns {
-				if soa, ok := rr.(*dns.SOA); ok {
-					soa.Hdr.Ttl = min(soa.Hdr.Ttl, soa.Minttl)
-				}
-			}
-		}
-		if h.builtInCache != nil && shouldCacheResponse(resp) && validateResponse(req, resp, h.logger) {
-			if ttl := getDnsResponseTtl(resp); ttl > 0 {
-				cached := &cache.CachedMsg{Msg: resp.Copy(), Expires: time.Now().Add(ttl)}
-				if err := h.builtInCache.Set(cacheKey, cached, ttl+time.Hour); err != nil {
-					h.logger.Printf("Failed to cache response: %v", err)
-				}
-			}
-		}
+		normalizeNegativeTTL(resp)
+		h.cacheResponse(req, cacheKey, resp)
 		return resp, nil
 	})
 	resp = value.(*dns.Msg)

@@ -36,6 +36,7 @@ type StatsRecorder interface {
 	RecordDoHQuery()
 	RecordCacheHit()
 	RecordCacheMiss()
+	RecordPrefetch()
 	RecordFailedQuery(clientIP, domain, reason string)
 	RecordUpstreamQuery(address string, isError bool, latency time.Duration)
 	RetainUpstreams(addresses []string)
@@ -62,6 +63,7 @@ type Stats struct {
 	FailedQueries atomic.Uint64
 	// 过滤器拦截数。此前只有过滤器自己记的“本次运行拦截”，重启归零，与其他累计数据口径不一致。
 	BlockedQueries atomic.Uint64
+	Prefetches     atomic.Uint64 // Background refreshes of cache entries about to expire
 
 	recent queryWindow // 近 24 小时按小时计数
 	now    func() time.Time
@@ -130,6 +132,15 @@ func (s *Stats) RecordDoHQuery() {
 	s.DoHQueries.Add(1)
 }
 
+// cacheHitRate 只统计查过缓存的请求。曾以总查询数为分母：拦截与自定义记录从不查
+// 缓存，命中率被拦截占比拉低。
+func cacheHitRate(hits, misses uint64) float64 {
+	if hits+misses == 0 {
+		return 0
+	}
+	return float64(hits) / float64(hits+misses) * 100
+}
+
 // RecordCacheHit 记录缓存命中
 func (s *Stats) RecordCacheHit() {
 	s.CacheHits.Add(1)
@@ -140,6 +151,12 @@ func (s *Stats) RecordCacheHit() {
 func (s *Stats) RecordCacheMiss() {
 	s.CacheMisses.Add(1)
 	s.recent.at(s.now()).cacheMisses.Add(1)
+}
+
+// RecordPrefetch 记录一次缓存条目到期前的后台刷新。
+func (s *Stats) RecordPrefetch() {
+	s.Prefetches.Add(1)
+	s.recent.at(s.now()).prefetched.Add(1)
 }
 
 // Failure reasons recorded with RecordFailedQuery. Any other reason is the
@@ -252,6 +269,7 @@ func (s *Stats) Reset() {
 	s.CacheMisses.Store(0)
 	s.FailedQueries.Store(0)
 	s.BlockedQueries.Store(0)
+	s.Prefetches.Store(0)
 	s.recent.reset()
 
 	// 重置上游服务器统计
@@ -290,6 +308,7 @@ type QueryStats struct {
 	CacheMisses uint64  `json:"cache_misses"` // 缓存未命中数
 	Failed      uint64  `json:"failed"`       // 失败查询数
 	Blocked     uint64  `json:"blocked"`      // 过滤器拦截数
+	Prefetched  uint64  `json:"prefetched"`   // 到期前后台刷新次数
 	HitRate     float64 `json:"hit_rate"`     // 缓存命中率
 }
 
@@ -378,10 +397,7 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 	misses := s.CacheMisses.Load()
 	failed := s.FailedQueries.Load()
 
-	var hitRate float64
-	if total > 0 {
-		hitRate = float64(hits) / float64(total) * 100
-	}
+	hitRate := cacheHitRate(hits, misses)
 
 	queryStats := QueryStats{
 		Total:       total,
@@ -390,6 +406,7 @@ func (s *Stats) GetSnapshot() StatsSnapshot {
 		CacheMisses: misses,
 		Failed:      failed,
 		Blocked:     s.BlockedQueries.Load(),
+		Prefetched:  s.Prefetches.Load(),
 		HitRate:     hitRate,
 	}
 
@@ -621,6 +638,7 @@ type PersistentStats struct {
 	CacheMisses             uint64                         `json:"cache_misses"`
 	FailedQueries           uint64                         `json:"failed_queries"`
 	BlockedQueries          uint64                         `json:"blocked_queries,omitempty"`
+	Prefetches              uint64                         `json:"prefetches,omitempty"`
 	Recent                  []PersistentQueryHour          `json:"recent,omitempty"`
 	Upstreams               map[string]*PersistentUpstream `json:"upstreams"`
 	TopClients              []PersistentTopNItem           `json:"top_clients"`
@@ -836,6 +854,7 @@ func (s *Stats) marshalPersistent() ([]byte, error) {
 		CacheMisses:             s.CacheMisses.Load(),
 		FailedQueries:           s.FailedQueries.Load(),
 		BlockedQueries:          s.BlockedQueries.Load(),
+		Prefetches:              s.Prefetches.Load(),
 		Recent:                  s.recent.persistent(now),
 		Upstreams:               make(map[string]*PersistentUpstream),
 		TopClients:              make([]PersistentTopNItem, 0),
@@ -925,6 +944,7 @@ func (s *Stats) Load(dataPath string) error {
 	s.CacheMisses.Store(persistent.CacheMisses)
 	s.FailedQueries.Store(persistent.FailedQueries)
 	s.BlockedQueries.Store(persistent.BlockedQueries)
+	s.Prefetches.Store(persistent.Prefetches)
 	s.recent.restore(persistent.Recent, s.now())
 	s.restoreECSBlackholeLocked(persistent.ECSBlackhole)
 

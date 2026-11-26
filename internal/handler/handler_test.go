@@ -134,7 +134,7 @@ func TestCacheRespectsShortTTLAndRecordTTLs(t *testing.T) {
 		&dns.CNAME{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 5}, Target: "b.example."},
 		&dns.A{Hdr: dns.RR_Header{Name: "b.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}},
 	}
-	if got := getDnsResponseTtl(msg); got > 5*time.Second || got <= 0 {
+	if got := getDnsResponseTtl(msg, time.Hour); got > 5*time.Second || got <= 0 {
 		t.Errorf("cache lifetime = %s, want <= 5s", got)
 	}
 	resp := replyUpdateTtl(testQuery("a.example."), msg.Copy(), 4)
@@ -149,7 +149,7 @@ func TestSignedCacheDoesNotOutliveSignature(t *testing.T) {
 		&dns.A{Hdr: dns.RR_Header{Name: "signed.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}},
 		&dns.RRSIG{Hdr: dns.RR_Header{Name: "signed.example.", Rrtype: dns.TypeRRSIG, Class: dns.ClassINET, Ttl: 300}, Expiration: uint32(time.Now().Add(3 * time.Second).Unix())},
 	}
-	if got := getDnsResponseTtl(msg); got > 3*time.Second {
+	if got := getDnsResponseTtl(msg, time.Hour); got > 3*time.Second {
 		t.Errorf("cache lifetime = %s, exceeds RRSIG validity", got)
 	}
 }

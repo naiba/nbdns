@@ -74,6 +74,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 | `max_active_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大连接数 | `50` |
 | `max_idle_connections` | 每个 TCP/DoT 连接池或 DoH 上游的最大空闲连接数 | `20` |
 | `built_in_cache` | 启用 Badger 持久缓存与内存热缓存                     | `false`        |
+| `cache_max_ttl` | 应答在缓存中保持新鲜的最长时间（秒）；更短的 DNS TTL 照常生效 | `86400` |
 | `socks_proxy`    | SOCKS5 代理地址                                      | 可选           |
 | `bootstrap` | 引导 DNS（地址使用 IP），为没有本地 A 记录覆盖的上游主机名提供解析 | 按需 |
 | `upstreams`      | 上游 DNS 列表                                        | 必填           |
@@ -93,7 +94,7 @@ Windows 上的 [dig](https://help.dyn.com/how-to-use-binds-dig-tool/) 工具
 - `a.com` 仅匹配 a.com
 - `.a.com` 匹配 a.a.com, c.a.com, e.d.a.com 等
 
-Bootstrap 与普通解析共用同一个内存热缓存和 Badger 持久缓存，统一由 `built_in_cache` 控制；关闭后两者均不缓存。重启后仍可复用未过期的磁盘缓存。缓存键区分上游及 ECS 策略，相同策略的结果可以互相复用。缓存寿命遵循 DNS TTL（最多一小时），TTL 为 0 或解析失败时不写入缓存；有 SOA 的否定应答按负缓存 TTL 缓存。并发重复解析仍会合并。
+Bootstrap 与普通解析共用同一个内存热缓存和 Badger 持久缓存，统一由 `built_in_cache` 控制；关闭后两者均不缓存。重启后仍可复用未过期的磁盘缓存。缓存键区分上游及 ECS 策略，相同策略的结果可以互相复用。缓存寿命遵循 DNS TTL，上限为 `cache_max_ttl`（默认 1 天，与 Unbound 相同）；DDNS 等 TTL 更短的记录按原 TTL 过期。上游正常时从不返回过期条目，过期条目只再保留 1 小时，供上游全部失败时降级使用。条目在寿命最后 1/10 内被查询（寿命至少 10 秒）时会在后台提前刷新（预取），热门域名因此很少未命中；达到 `max_concurrent_queries` 时预取让位于客户端查询。缓存命中率只统计查过缓存的请求：拦截与自定义记录不计入，过期条目计为未命中。TTL 为 0 或解析失败时不写入缓存；有 SOA 的否定应答按负缓存 TTL 缓存。并发重复解析仍会合并。
 
 Bootstrap 和普通 DNS 查询共用 `custom_records`，覆盖优先于缓存和上游查询。例如固定 Google DNS：
 

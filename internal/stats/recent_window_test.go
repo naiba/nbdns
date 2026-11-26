@@ -35,7 +35,7 @@ func TestRecentWindowCountsHoursAndDropsExpiredOnes(t *testing.T) {
 	if recent.WindowHours != 24 || len(recent.Hours) != 24 {
 		t.Fatalf("window = %d hours, %d entries", recent.WindowHours, len(recent.Hours))
 	}
-	if recent.Queries != 4 || recent.CacheHits != 1 || recent.CacheMisses != 1 || recent.Failed != 1 || recent.Blocked != 1 || recent.HitRate != 25 {
+	if recent.Queries != 4 || recent.CacheHits != 1 || recent.CacheMisses != 1 || recent.Failed != 1 || recent.Blocked != 1 || recent.HitRate != 50 {
 		t.Errorf("recent totals = %+v", recent)
 	}
 	last, twoHoursAgo := recent.Hours[23], recent.Hours[21]
@@ -162,5 +162,47 @@ func TestRetainUpstreamsDropsRemovedUpstreams(t *testing.T) {
 	got := s.GetSnapshot().Upstreams
 	if len(got) != 1 || got[0].Address != "udp://kept.example:53" {
 		t.Errorf("upstreams = %+v", got)
+	}
+}
+
+// Blocked queries and local answers never consult the cache; counting them in
+// the denominator understated the hit rate by the share of blocked queries.
+func TestHitRateIgnoresQueriesThatNeverReachTheCache(t *testing.T) {
+	s := NewStats()
+	for range 3 {
+		s.RecordQuery()
+		s.RecordCacheHit()
+	}
+	s.RecordQuery()
+	s.RecordCacheMiss()
+	for range 6 {
+		s.RecordQuery()
+		s.RecordBlockedQuery("192.0.2.1", "ads.example.")
+	}
+	snapshot := s.GetSnapshot()
+	if snapshot.Queries.HitRate != 75 || snapshot.Recent.HitRate != 75 {
+		t.Errorf("hit rate = lifetime %v, recent %v, want 75", snapshot.Queries.HitRate, snapshot.Recent.HitRate)
+	}
+}
+
+func TestPrefetchCountPersistsAndResets(t *testing.T) {
+	start := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
+	s, _ := statsWithClock(start)
+	s.RecordPrefetch()
+	s.RecordPrefetch()
+	dir := t.TempDir()
+	if err := s.Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := statsWithClock(start.Add(time.Minute))
+	if err := loaded.Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.GetSnapshot(); got.Queries.Prefetched != 2 || got.Recent.Prefetched != 2 || got.Recent.Hours[23].Prefetched != 2 {
+		t.Fatalf("restored prefetches = %+v / %+v", got.Queries, got.Recent)
+	}
+	loaded.Reset()
+	if got := loaded.GetSnapshot(); got.Queries.Prefetched != 0 || got.Recent.Prefetched != 0 {
+		t.Errorf("after reset = %+v / %+v", got.Queries, got.Recent)
 	}
 }

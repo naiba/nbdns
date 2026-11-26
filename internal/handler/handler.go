@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -33,6 +34,24 @@ type Handler struct {
 	filter                            filter.Matcher
 	logger                            logger.Logger
 	stats                             stats.StatsRecorder
+	maxCacheTTL                       time.Duration
+
+	// Background prefetches (see maybePrefetch); Close waits for them so none
+	// writes to a closed cache.
+	backgroundMu sync.Mutex
+	background   sync.WaitGroup
+	closing      bool
+	prefetching  map[string]bool
+}
+
+// SetCacheMaxTTL caps how long answers stay fresh in the cache (cache_max_ttl).
+// It used to be a hard-coded hour, refetching long-TTL names every hour.
+func (h *Handler) SetCacheMaxTTL(maximum time.Duration) error {
+	if maximum <= 0 {
+		return fmt.Errorf("cache_max_ttl must be positive")
+	}
+	h.maxCacheTTL = maximum
+	return nil
 }
 
 // SetFilter installs an immutable filter before the handler begins serving.
@@ -83,6 +102,8 @@ func NewHandler(builtInCache bool,
 		builtInCache:     c,
 		logger:           log,
 		stats:            statsRecorder,
+		maxCacheTTL:      model.DefaultCacheMaxTTL * time.Second,
+		prefetching:      make(map[string]bool),
 	}
 }
 
@@ -275,7 +296,7 @@ func namespacedDNSCacheKey(namespace string, m *dns.Msg) string {
 	return string(key)
 }
 
-func getDnsResponseTtl(m *dns.Msg) time.Duration {
+func getDnsResponseTtl(m *dns.Msg, maximum time.Duration) time.Duration {
 	var ttl uint32
 	if len(m.Answer) == 0 {
 		// RFC 2308: negative answers are cacheable only with an SOA.
@@ -291,7 +312,7 @@ func getDnsResponseTtl(m *dns.Msg) time.Duration {
 			ttl = min(ttl, rr.Header().Ttl)
 		}
 	}
-	lifetime := time.Duration(min(ttl, 3600)) * time.Second
+	lifetime := min(time.Duration(ttl)*time.Second, maximum)
 	for _, section := range [][]dns.RR{m.Answer, m.Ns, m.Extra} {
 		for _, rr := range section {
 			if sig, ok := rr.(*dns.RRSIG); ok {
@@ -473,20 +494,22 @@ func (h *Handler) resolveDnsMsg(req *dns.Msg, clientIP, domain string) *dns.Msg 
 	var respCache *dns.Msg
 	if h.builtInCache != nil {
 		cacheKey = namespacedDNSCacheKey(h.cacheNamespace, req)
-		if v, ok := h.builtInCache.Get(cacheKey); ok {
-			if h.stats != nil {
-				h.stats.RecordCacheHit()
-			}
+		v, ok := h.builtInCache.Get(cacheKey)
+		if ok {
 			respCache = v.Msg.Copy()
 			if v.Expires.After(time.Now()) {
+				if h.stats != nil {
+					h.stats.RecordCacheHit()
+				}
 				msg := replyUpdateTtl(req, respCache, uint32(time.Until(v.Expires).Seconds()))
 				setResponseEDNS(req, msg)
+				h.maybePrefetch(req, cacheKey, v)
 				return msg
 			}
-		} else {
-			if h.stats != nil {
-				h.stats.RecordCacheMiss()
-			}
+		}
+		// 过期条目只作上游失败时的降级，本次仍回源，记为未命中（曾被记成命中，虚高命中率）。
+		if h.stats != nil {
+			h.stats.RecordCacheMiss()
 		}
 	}
 
@@ -636,6 +659,10 @@ func truncateUDP(req, resp *dns.Msg) {
 // 基于域名、类型和记录数据进行去重，比字符串分割更高效和可靠
 // Close properly shuts down the cache
 func (h *Handler) Close() error {
+	h.backgroundMu.Lock()
+	h.closing = true
+	h.backgroundMu.Unlock()
+	h.background.Wait()
 	if h.builtInCache != nil && !h.borrowedCache {
 		return h.builtInCache.Close()
 	}

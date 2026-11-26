@@ -36,6 +36,7 @@ type Config struct {
 	Timeout                   int              `json:"timeout,omitempty"`
 	SocksProxy                string           `json:"socks_proxy,omitempty"`
 	BuiltInCache              bool             `json:"built_in_cache,omitempty"`
+	CacheMaxTTL               int              `json:"cache_max_ttl,omitempty"` // Seconds; default DefaultCacheMaxTTL
 	Upstreams                 []*Upstream      `json:"upstreams,omitempty"`
 	Bootstrap                 []*Upstream      `json:"bootstrap,omitempty"`
 	FilterLists               []string         `json:"filter_lists,omitempty"`                 // AdGuard DNS / hosts files, relative to data/
@@ -102,6 +103,12 @@ func (c *Config) ReadInConfig(path string, log logger.Logger) error {
 	}
 	if c.MaxConcurrentQueries == 0 {
 		c.MaxConcurrentQueries = DefaultMaxConcurrentQueries
+	}
+	if c.CacheMaxTTL < 0 {
+		return fmt.Errorf("cache_max_ttl must not be negative")
+	}
+	if c.CacheMaxTTL == 0 {
+		c.CacheMaxTTL = DefaultCacheMaxTTL
 	}
 
 	// Set default connection pool values

@@ -89,6 +89,9 @@ func main() {
 	if err := upstreamHandler.SetCustomRecords(config.CustomRecords); err != nil {
 		panic(err)
 	}
+	if err := upstreamHandler.SetCacheMaxTTL(time.Duration(config.CacheMaxTTL) * time.Second); err != nil {
+		panic(err)
+	}
 	bootstrapHandler := upstreamHandler.NewBootstrapHandler(config.Bootstrap)
 
 	for i := 0; i < len(config.Upstreams); i++ {

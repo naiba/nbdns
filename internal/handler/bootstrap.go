@@ -6,6 +6,7 @@ import "github.com/naiba/nbdns/internal/model"
 func (owner *Handler) NewBootstrapHandler(upstreams []*model.Upstream) *Handler {
 	h := NewHandler(false, upstreams, "", owner.logger, nil)
 	h.customRecords = owner.customRecords
+	h.maxCacheTTL = owner.maxCacheTTL
 	// Share the existing cache instance, not a second Badger handle for the same
 	// directory. Keep policy-based keys: ECS/upstream differences can change
 	// answers even when both resolvers are trusted. Only the owner closes it.

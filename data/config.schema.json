@@ -139,6 +139,12 @@
       "default": false,
       "description": "启用 Badger 持久缓存与有界内存热缓存。"
     },
+    "cache_max_ttl": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 86400,
+      "description": "缓存条目最长新鲜时间（秒），0 或省略为 86400（1 天）。低于此值的 DNS TTL 照常生效，DDNS 等短 TTL 记录按原 TTL 过期；过期条目另保留 1 小时，仅在上游失败时降级使用。"
+    },
     "timeout": {
       "type": "integer",
       "minimum": 0,

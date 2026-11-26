@@ -30,6 +30,7 @@ type queryHour struct {
 	cacheMisses atomic.Uint64
 	failed      atomic.Uint64
 	blocked     atomic.Uint64
+	prefetched  atomic.Uint64
 }
 
 type queryWindow struct {
@@ -48,6 +49,7 @@ func (w *queryWindow) at(now time.Time) *queryHour {
 			slot.cacheMisses.Store(0)
 			slot.failed.Store(0)
 			slot.blocked.Store(0)
+			slot.prefetched.Store(0)
 			slot.hour.Store(hour)
 		}
 		w.rotate.Unlock()
@@ -71,6 +73,7 @@ type RecentHourJSON struct {
 	CacheMisses uint64    `json:"cache_misses"`
 	Failed      uint64    `json:"failed"`
 	Blocked     uint64    `json:"blocked"`
+	Prefetched  uint64    `json:"prefetched"`
 }
 
 // RecentStats summarizes the last recentWindowHours hours, oldest hour first.
@@ -82,6 +85,7 @@ type RecentStats struct {
 	CacheMisses uint64           `json:"cache_misses"`
 	Failed      uint64           `json:"failed"`
 	Blocked     uint64           `json:"blocked"`
+	Prefetched  uint64           `json:"prefetched"` // Background refreshes of entries about to expire
 	HitRate     float64          `json:"hit_rate"`
 }
 
@@ -93,7 +97,7 @@ func (w *queryWindow) snapshot(now time.Time) RecentStats {
 		slot := &w.hours[hour%recentWindowHours]
 		if slot.hour.Load() == hour {
 			entry.Queries, entry.CacheHits, entry.CacheMisses = slot.queries.Load(), slot.cacheHits.Load(), slot.cacheMisses.Load()
-			entry.Failed, entry.Blocked = slot.failed.Load(), slot.blocked.Load()
+			entry.Failed, entry.Blocked, entry.Prefetched = slot.failed.Load(), slot.blocked.Load(), slot.prefetched.Load()
 		}
 		result.Hours = append(result.Hours, entry)
 		result.Queries += entry.Queries
@@ -101,10 +105,9 @@ func (w *queryWindow) snapshot(now time.Time) RecentStats {
 		result.CacheMisses += entry.CacheMisses
 		result.Failed += entry.Failed
 		result.Blocked += entry.Blocked
+		result.Prefetched += entry.Prefetched
 	}
-	if result.Queries > 0 {
-		result.HitRate = float64(result.CacheHits) / float64(result.Queries) * 100
-	}
+	result.HitRate = cacheHitRate(result.CacheHits, result.CacheMisses)
 	return result
 }
 
@@ -116,6 +119,7 @@ type PersistentQueryHour struct {
 	CacheMisses uint64 `json:"cache_misses"`
 	Failed      uint64 `json:"failed"`
 	Blocked     uint64 `json:"blocked"`
+	Prefetched  uint64 `json:"prefetched,omitempty"`
 }
 
 func (w *queryWindow) persistent(now time.Time) []PersistentQueryHour {
@@ -128,7 +132,7 @@ func (w *queryWindow) persistent(now time.Time) []PersistentQueryHour {
 			continue
 		}
 		result = append(result, PersistentQueryHour{Hour: hour, Queries: slot.queries.Load(), CacheHits: slot.cacheHits.Load(),
-			CacheMisses: slot.cacheMisses.Load(), Failed: slot.failed.Load(), Blocked: slot.blocked.Load()})
+			CacheMisses: slot.cacheMisses.Load(), Failed: slot.failed.Load(), Blocked: slot.blocked.Load(), Prefetched: slot.prefetched.Load()})
 	}
 	return result
 }
@@ -145,6 +149,7 @@ func (w *queryWindow) restore(hours []PersistentQueryHour, now time.Time) {
 		slot.cacheMisses.Store(saved.CacheMisses)
 		slot.failed.Store(saved.Failed)
 		slot.blocked.Store(saved.Blocked)
+		slot.prefetched.Store(saved.Prefetched)
 	}
 }
 

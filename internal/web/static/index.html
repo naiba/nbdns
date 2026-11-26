@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark">
     <title>NbDNS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌐</text></svg>">
-    <link rel="stylesheet" href="style.css?v=4.0.2">
+    <link rel="stylesheet" href="style.css?v=4.1.0">
 </head>
 <body>
     <nav>
@@ -31,10 +31,10 @@
             </div>
             <dl class="kv">
                 <div class="em"><dt>查询</dt><dd id="recent-queries">-</dd></div>
-                <div class="good"><dt>缓存命中率</dt><dd id="recent-hit-rate">-</dd></div>
+                <div class="good"><dt title="命中 ÷（命中 + 回源）；拦截和自定义记录不查缓存，不计入">缓存命中率</dt><dd id="recent-hit-rate">-</dd></div>
                 <div><dt>拦截</dt><dd id="recent-blocked">-</dd></div>
-                <div class="bad"><dt>解析失败</dt><dd id="recent-failed">-</dd></div>
-                <div class="bad"><dt>失败率</dt><dd id="recent-failed-rate">-</dd></div>
+                <div class="bad"><dt>解析失败 · 失败率</dt><dd id="recent-failed">-</dd></div>
+                <div><dt title="缓存条目在 TTL 最后 10% 内被查询时，后台提前刷新，热门域名因此很少过期">到期前预取</dt><dd id="recent-prefetched">-</dd></div>
                 <div><dt>缓存命中 / 回源</dt><dd id="recent-cache">-</dd></div>
             </dl>
             <div class="trend" aria-label="每小时查询趋势">
@@ -53,6 +53,7 @@
                 <span>命中率 <b id="hit-rate">-</b></span>
                 <span>拦截 <b id="blocked-queries">-</b></span>
                 <span>失败 <b id="failed-queries">-</b></span>
+                <span>预取 <b id="prefetched-queries">-</b></span>
                 <span>DoH <b id="doh-queries">-</b></span>
                 <button id="reset-stats-btn" class="link-btn danger" title="清空全部统计（包括近 24 小时与排行）">重置统计</button>
             </div>
@@ -263,6 +264,6 @@
         <div>NbDNS <a id="version-display" href="https://github.com/naiba/nbdns/releases" target="_blank" rel="noopener" title="查看此版本的发布说明">v0.0.0</a> — 智能 DNS 中继 · <a href="https://github.com/naiba/nbdns" target="_blank" rel="noopener">GitHub</a> · <a href="https://github.com/naiba/nbdns/issues" target="_blank" rel="noopener">反馈问题</a></div>
     </footer>
 
-    <script src="app.js?v=4.0.2"></script>
+    <script src="app.js?v=4.1.0"></script>
 </body>
 </html>

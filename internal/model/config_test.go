@@ -120,3 +120,28 @@ func TestConfigSchemaListsEveryConfigField(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigCacheMaxTTL(t *testing.T) {
+	for _, tc := range []struct {
+		value   int
+		want    int
+		invalid bool
+	}{{0, DefaultCacheMaxTTL, false}, {600, 600, false}, {-1, 0, true}} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		body := fmt.Sprintf(`{"cache_max_ttl":%d,"upstreams":[{"address":"udp://127.0.0.1:53"}]}`, tc.value)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var config Config
+		err := config.ReadInConfig(path, logger.New(false))
+		if tc.invalid {
+			if err == nil || !strings.Contains(err.Error(), "cache_max_ttl") {
+				t.Fatalf("invalid cache_max_ttl accepted: %v", err)
+			}
+			continue
+		}
+		if err != nil || config.CacheMaxTTL != tc.want {
+			t.Fatalf("cache_max_ttl=%d want=%d err=%v", config.CacheMaxTTL, tc.want, err)
+		}
+	}
+}

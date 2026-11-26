@@ -94,6 +94,7 @@ function updateLifetime(q) {
     setText('blocked-queries', fmt(q.blocked));
     setText('failed-queries', fmt(q.failed));
     setText('doh-queries', fmt(q.doh));
+    setText('prefetched-queries', fmt(q.prefetched));
 }
 
 function updateRecent(r) {
@@ -101,8 +102,8 @@ function updateRecent(r) {
     setText('recent-queries', fmt(r.queries));
     setText('recent-hit-rate', pct(r.hit_rate));
     setText('recent-blocked', fmt(r.blocked));
-    setText('recent-failed', fmt(r.failed));
-    setText('recent-failed-rate', pct(ratio(r.failed, r.queries)));
+    setText('recent-failed', fmt(r.failed) + ' · ' + pct(ratio(r.failed, r.queries)));
+    setText('recent-prefetched', fmt(r.prefetched));
     setText('recent-cache', fmt(r.cache_hits) + ' / ' + fmt(r.cache_misses));
     setText('filter-blocked', fmt(r.blocked));
     drawTrend(r.hours || []);
@@ -130,7 +131,8 @@ function drawTrend(hours) {
         var title = document.createElementNS(SVG_NS, 'title');
         var start = new Date(h.start);
         title.textContent = start.toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) +
-            '\n查询 ' + fmt(h.queries) + ' · 缓存命中 ' + fmt(h.cache_hits) + '\n拦截 ' + fmt(h.blocked) + ' · 失败 ' + fmt(h.failed);
+            '\n查询 ' + fmt(h.queries) + ' · 缓存命中 ' + fmt(h.cache_hits) + ' · 回源 ' + fmt(h.cache_misses) +
+            '\n拦截 ' + fmt(h.blocked) + ' · 失败 ' + fmt(h.failed) + ' · 预取 ' + fmt(h.prefetched);
         group.appendChild(title);
         // Hover target spans the whole slot so empty hours still show their tooltip.
         group.appendChild(svgRect(i * slot, 0, slot, height, 'trend-hit'));
