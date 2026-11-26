@@ -44,13 +44,8 @@ archives:
       - LICENSE
       - README.md
       - README_zh.md
-      - doc/release-v2.0.0.md
-      - doc/release-v2.0.1.md
-      - doc/release-v2.0.2.md
-      - doc/release-v2.0.3.md
-      - doc/release-v2.0.5.md
-      - doc/performance-local.md
-      - doc/upstream-concurrency-performance.md
+      # Glob: listing release notes one by one left every note after v2.0.5 out.
+      - doc/*.md
       - data
 dockers_v2:
   - images:
